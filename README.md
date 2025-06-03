@@ -16,7 +16,11 @@ For support on setting up your own instance of PokeBot, feel free to join the di
 
 # Noteworthy Features
 - Live Log Searching through the Log tab.  Search for anything and find results fast.
+
+![image](https://github.com/user-attachments/assets/820d8892-ae52-4aa6-981a-cb57d1c32690)
+
 - Tray Support - When you press X to close out of the program, it goes to the system tray.  Right click the PokeBot icon in the tray to exit or control the bot.
+
 ![image](https://github.com/user-attachments/assets/3a30b334-955c-4fb3-b7d8-60cd005a2e18)
 
 # Pokémon Trading Bot Commands
