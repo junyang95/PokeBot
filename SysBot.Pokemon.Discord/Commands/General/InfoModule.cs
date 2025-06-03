@@ -1,5 +1,6 @@
 using Discord;
 using Discord.Commands;
+using SysBot.Pokemon.Helpers;
 using System;
 using System.Diagnostics;
 using System.Globalization;
@@ -15,8 +16,9 @@ namespace SysBot.Pokemon.Discord;
 // Copyright 2017, Christopher F. <foxbot@protonmail.com>
 public class InfoModule : ModuleBase<SocketCommandContext>
 {
-    private const string detail = "I am an open-source Discord bot powered by PKHeX.Core and other open-source software.";
-    private const string repo = "https://github.com/kwsch/SysBot.NET";
+    private const string detail = "I am an open-source Pokemon Trading Discord bot developed by bdawg1989.";
+
+    private const string repo = "https://github.com/bdawg1989/PokeBot";
 
     [Command("info")]
     [Alias("about", "whoami", "owner")]
@@ -38,6 +40,7 @@ public class InfoModule : ModuleBase<SocketCommandContext>
             $"- {Format.Bold("Runtime")}: {RuntimeInformation.FrameworkDescription} {RuntimeInformation.ProcessArchitecture} " +
             $"({RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture})\n" +
             $"- {Format.Bold("Buildtime")}: {GetVersionInfo("SysBot.Base", false)}\n" +
+            $"- {Format.Bold("SysBot+ Version")}: {PokeBot.Version}\n" +
             $"- {Format.Bold("Core Version")}: {GetVersionInfo("PKHeX.Core")}\n" +
             $"- {Format.Bold("AutoLegality Version")}: {GetVersionInfo("PKHeX.Core.AutoMod")}\n"
         );
@@ -52,8 +55,9 @@ public class InfoModule : ModuleBase<SocketCommandContext>
         await ReplyAsync("Here's a bit about me!", embed: builder.Build()).ConfigureAwait(false);
     }
 
-    private static string GetUptime() => (DateTime.Now - Process.GetCurrentProcess().StartTime).ToString(@"dd\.hh\:mm\:ss");
     private static string GetHeapSize() => Math.Round(GC.GetTotalMemory(true) / (1024.0 * 1024.0), 2).ToString(CultureInfo.CurrentCulture);
+
+    private static string GetUptime() => (DateTime.Now - Process.GetCurrentProcess().StartTime).ToString(@"dd\.hh\:mm\:ss");
 
     private static string GetVersionInfo(string assemblyName, bool inclVersion = true)
     {
@@ -67,13 +71,14 @@ public class InfoModule : ModuleBase<SocketCommandContext>
 
         var info = attribute.InformationalVersion;
         var split = info.Split('+');
-        if (split.Length < 2)
-            return _default;
-
-        var version = split[0];
-        var revision = split[1];
-        if (DateTime.TryParseExact(revision, "yyMMddHHmmss", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var buildTime))
-            return (inclVersion ? $"{version} " : "") + $@"{buildTime:yy-MM-dd\.hh\:mm}";
-        return !inclVersion ? _default : version;
+        if (split.Length >= 2)
+        {
+            var version = split[0];
+            var revision = split[1];
+            if (DateTime.TryParseExact(revision, "yyMMddHHmmss", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var buildTime))
+                return (inclVersion ? $"{version} " : "") + $@"{buildTime:yy-MM-dd\.hh\:mm}";
+            return inclVersion ? version : _default;
+        }
+        return _default;
     }
 }
