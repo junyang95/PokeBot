@@ -96,7 +96,7 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
-          name: SVRaidBot
+          name: PokeBot
           path: ./publish
       - name: Create Release
         id: create_release
