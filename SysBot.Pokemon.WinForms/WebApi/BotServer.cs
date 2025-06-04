@@ -77,7 +77,6 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                     min-height: 100vh; 
                     display: flex; 
                     flex-direction: column; 
-                    position: relative;
                 }
         
                 .header { 
@@ -131,11 +130,40 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                     70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); } 
                     100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } 
                 }
+
+                .refresh-status {
+                    display: flex;
+                    align-items: center;
+                    gap: var(--spacing-sm);
+                }
+
+                .refresh-indicator {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 50%;
+                    background: var(--success);
+                    transition: all 0.3s ease;
+                    cursor: help;
+                }
+
+                .refresh-indicator.paused {
+                    background: var(--warning);
+                    animation: pulse-warning 2s infinite;
+                }
+
+                .refresh-indicator:hover {
+                    transform: scale(1.5);
+                }
+
+                @keyframes pulse-warning {
+                    0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7); }
+                    70% { box-shadow: 0 0 0 8px rgba(245, 158, 11, 0); }
+                    100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+                }
         
                 .main { 
                     flex: 1; 
                     padding: var(--spacing-lg); 
-                    padding-bottom: 100px;
                     max-width: 1400px; 
                     margin: 0 auto; 
                     width: 100%; 
@@ -184,16 +212,18 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                 }
         
                 .btn:hover:not(:disabled) { 
+                    transform: translateY(-2px); 
                     box-shadow: var(--shadow); 
                 }
         
                 .btn:active { 
-                    box-shadow: none;
+                    transform: translateY(0); 
                 }
         
                 .btn:disabled {
                     opacity: 0.5;
                     cursor: not-allowed;
+                    transform: none !important;
                 }
         
                 .btn-primary { 
@@ -225,18 +255,15 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                     display: grid; 
                     grid-template-columns: repeat(auto-fill, minmax(min(100%, 350px), 1fr)); 
                     gap: var(--spacing-lg); 
-                    margin-bottom: 100px;
-                    position: relative;
-                    z-index: 0;
                 }
         
                 .instance-card { 
                     background: var(--bg-card); 
                     border-radius: var(--border-radius); 
                     border: 1px solid var(--border); 
+                    overflow: hidden; 
                     transition: all 0.3s ease; 
                     position: relative; 
-                    z-index: 1;
                 }
         
                 .instance-card.online { 
@@ -249,8 +276,8 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                 }
         
                 .instance-card:hover { 
+                    transform: translateY(-4px); 
                     box-shadow: var(--shadow-hover); 
-                    z-index: 10;
                 }
         
                 .instance-header { 
@@ -261,7 +288,6 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                     align-items: flex-start;
                     border-bottom: 1px solid var(--border);
                     gap: var(--spacing-sm);
-                    border-radius: var(--border-radius) var(--border-radius) 0 0;
                 }
         
                 .instance-title { 
@@ -285,13 +311,8 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                     flex-shrink: 0;
                 }
         
-                .instance-card.dropdown-open {
-                    z-index: 100;
-                }
-                
                 .instance-body { 
                     padding: var(--spacing-lg); 
-                    position: relative;
                 }
         
                 .instance-info { 
@@ -386,97 +407,6 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                     color: var(--danger); 
                 }
         
-                .instance-actions {
-                    position: relative;
-                    display: inline-block;
-                    width: 100%;
-                    z-index: 20;
-                }
-        
-                .actions-toggle {
-                    width: 100%;
-                    background: var(--accent);
-                    border-color: var(--accent);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    gap: var(--spacing-sm);
-                }
-        
-                .actions-toggle:hover:not(:disabled) {
-                    background: var(--accent-hover);
-                }
-        
-                .actions-toggle .chevron {
-                    transition: transform 0.2s ease;
-                }
-        
-                .actions-toggle.open .chevron {
-                    transform: rotate(180deg);
-                }
-        
-                .actions-dropdown {
-                    position: absolute;
-                    top: 100%;
-                    left: 0;
-                    right: 0;
-                    margin-top: var(--spacing-xs);
-                    background: #0f1221;
-                    border: 2px solid var(--border);
-                    border-radius: var(--border-radius-sm);
-                    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.95), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
-                    opacity: 0;
-                    visibility: hidden;
-                    transform: translateY(-10px);
-                    transition: all 0.2s ease;
-                    z-index: 10000;
-                    max-height: 300px;
-                    overflow-y: auto;
-                    backdrop-filter: blur(20px);
-                }
-        
-                .actions-dropdown.show {
-                    opacity: 1;
-                    visibility: visible;
-                    transform: translateY(0);
-                }
-        
-                .action-item {
-                    padding: var(--spacing-sm) var(--spacing-md);
-                    cursor: pointer;
-                    transition: background 0.2s ease;
-                    display: flex;
-                    align-items: center;
-                    gap: var(--spacing-sm);
-                    border-bottom: 1px solid var(--border);
-                    font-size: 0.875rem;
-                }
-        
-                .action-item:last-child {
-                    border-bottom: none;
-                }
-        
-                .action-item:hover:not(.disabled) {
-                    background: rgba(124, 58, 237, 0.2);
-                }
-        
-                .action-item.disabled {
-                    opacity: 0.5;
-                    cursor: not-allowed;
-                }
-        
-                .action-item.danger {
-                    color: var(--danger);
-                }
-        
-                .action-item.warning {
-                    color: var(--warning);
-                }
-        
-                .action-item.success {
-                    color: var(--success);
-                }
-        
                 .loading { 
                     display: flex; 
                     align-items: center; 
@@ -514,93 +444,49 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                     position: fixed; 
                     bottom: var(--spacing-xl); 
                     right: var(--spacing-xl); 
-                    background: #1a1d35; 
-                    border: 2px solid var(--border); 
+                    background: var(--bg-card); 
+                    border: 1px solid var(--border); 
                     border-radius: var(--border-radius-sm); 
                     padding: var(--spacing-md) var(--spacing-lg); 
-                    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.1) inset; 
-                    transform: translateX(calc(100% + 200px)); 
-                    transition: transform 0.3s ease, opacity 0.3s ease, visibility 0.3s ease; 
-                    z-index: 9999; 
+                    box-shadow: var(--shadow-hover); 
+                    transform: translateX(calc(100% + var(--spacing-xl))); 
+                    transition: transform 0.3s ease; 
+                    z-index: 10000; 
                     display: flex; 
                     align-items: center; 
                     gap: var(--spacing-sm); 
                     max-width: min(400px, calc(100vw - 2rem));
                     word-break: break-word;
-                    opacity: 0;
-                    visibility: hidden;
-                    backdrop-filter: blur(20px);
-                    pointer-events: none;
+                    opacity: 1;
                 }
         
                 .toast.show { 
                     transform: translateX(0); 
-                    opacity: 1;
-                    visibility: visible;
-                    pointer-events: auto;
                 }
         
                 .toast.success { 
                     border-color: var(--success); 
-                    background: linear-gradient(135deg, #1a2e1a 0%, #1e3320 100%); 
-                }
-                
-                .toast.success .toast-icon {
-                    color: var(--success);
-                    filter: drop-shadow(0 0 3px rgba(16, 185, 129, 0.5));
+                    background: var(--bg-card); 
                 }
         
                 .toast.error { 
                     border-color: var(--danger); 
-                    background: linear-gradient(135deg, #2e1a1a 0%, #3a1e1e 100%); 
+                    background: var(--bg-card); 
                 }
-                
-                .toast.error .toast-icon {
-                    color: var(--danger);
-                    filter: drop-shadow(0 0 3px rgba(239, 68, 68, 0.5));
-                }
-                
+
                 .toast.warning { 
                     border-color: var(--warning); 
-                    background: linear-gradient(135deg, #2e251a 0%, #3a2f1e 100%); 
+                    background: var(--bg-card); 
                 }
-                
-                .toast.warning .toast-icon {
-                    color: var(--warning);
-                    filter: drop-shadow(0 0 3px rgba(245, 158, 11, 0.5));
-                }
-                
+
                 .toast.info { 
                     border-color: var(--accent); 
-                    background: linear-gradient(135deg, #1e1a2e 0%, #251e3a 100%); 
+                    background: var(--bg-card); 
                 }
-                
-                .toast.info .toast-icon {
-                    color: var(--accent);
-                    filter: drop-shadow(0 0 3px rgba(124, 58, 237, 0.5));
-                }
-                
+
                 .toast-icon {
-                    font-size: 1.5rem;
+                    font-size: 1.25rem;
                     flex-shrink: 0;
-                }
-                
-                .toast-content {
-                    flex: 1;
-                    min-width: 0;
-                }
-                
-                .toast-title {
-                    font-weight: 700;
-                    margin-bottom: 0.25rem;
-                    color: #ffffff;
-                    font-size: 1rem;
-                }
-                
-                .toast-message {
-                    font-size: 0.875rem;
-                    color: #e0e0e0;
-                    line-height: 1.4;
                 }
         
                 .online-indicator { 
@@ -651,20 +537,100 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                     border: 1px solid var(--idle); 
                 }
         
-                .dropdown-backdrop {
+                .instance-status-badge.mixed { 
+                    background: rgba(168, 174, 192, 0.2); 
+                    color: var(--text-secondary); 
+                    border: 1px solid var(--text-secondary); 
+                }
+
+                .instance-controls {
+                    position: relative;
+                }
+
+                .action-menu-button {
+                    padding: var(--spacing-sm) var(--spacing-md);
+                    background: var(--bg-hover);
+                    border: 1px solid var(--border);
+                    border-radius: var(--border-radius-sm);
+                    color: var(--text-primary);
+                    font-size: 0.875rem;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                    display: flex;
+                    align-items: center;
+                    gap: var(--spacing-xs);
+                    width: 100%;
+                    justify-content: center;
+                    min-height: 44px;
+                }
+
+                .action-menu-button:hover:not(:disabled) {
+                    background: var(--accent);
+                    border-color: var(--accent);
+                    transform: translateY(-1px);
+                    box-shadow: var(--shadow);
+                }
+
+                .action-menu-button:disabled {
+                    opacity: 0.5;
+                    cursor: not-allowed;
+                }
+
+                .action-menu {
+                    position: absolute;
+                    bottom: calc(100% + var(--spacing-xs));
+                    left: 0;
+                    right: 0;
+                    background: var(--bg-card);
+                    border: 1px solid var(--border);
+                    border-radius: var(--border-radius-sm);
+                    box-shadow: var(--shadow-hover);
+                    overflow: hidden;
                     display: none;
+                    z-index: 1000;
                 }
-                
-                .instance-card.dropup .actions-dropdown {
-                    top: auto;
-                    bottom: 100%;
-                    margin-top: 0;
-                    margin-bottom: var(--spacing-xs);
-                    transform: translateY(10px);
+
+                .action-menu.show {
+                    display: block;
                 }
-                
-                .instance-card.dropup .actions-dropdown.show {
-                    transform: translateY(0);
+
+                .action-menu-item {
+                    padding: var(--spacing-sm) var(--spacing-md);
+                    display: flex;
+                    align-items: center;
+                    gap: var(--spacing-sm);
+                    cursor: pointer;
+                    transition: background 0.2s ease;
+                    font-size: 0.875rem;
+                    white-space: nowrap;
+                    border: none;
+                    background: none;
+                    color: var(--text-primary);
+                    width: 100%;
+                    text-align: left;
+                }
+
+                .action-menu-item:hover {
+                    background: var(--bg-hover);
+                }
+
+                .action-menu-item.success {
+                    color: var(--success);
+                }
+
+                .action-menu-item.warning {
+                    color: var(--warning);
+                }
+
+                .action-menu-item.danger {
+                    color: var(--danger);
+                }
+
+                .action-menu-divider {
+                    height: 1px;
+                    background: var(--border);
+                    margin: var(--spacing-xs) 0;
                 }
 
                 @media (max-width: 1024px) {
@@ -686,6 +652,13 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                     .header-content {
                         flex-wrap: wrap;
                     }
+
+                    .refresh-status {
+                        order: 3;
+                        width: 100%;
+                        justify-content: center;
+                        margin-top: var(--spacing-sm);
+                    }
             
                     .main { 
                         padding: var(--spacing-md); 
@@ -694,7 +667,6 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                     .instances-grid { 
                         grid-template-columns: 1fr; 
                         gap: var(--spacing-md);
-                        margin-bottom: 100px;
                     }
             
                     .control-buttons { 
@@ -733,26 +705,24 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                         right: 0;
                         left: 0;
                         max-width: none;
+                        transform: translateY(100%);
                         border-radius: var(--border-radius-sm) var(--border-radius-sm) 0 0;
-                        transform: translateY(calc(100% + 10px));
-                        opacity: 0;
-                        visibility: hidden;
-                        box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.9);
                         margin: 0;
                     }
             
                     .toast.show {
                         transform: translateY(0);
-                        opacity: 1;
-                        visibility: visible;
                     }
-                    
-                    .toast-title {
-                        font-size: 1.1rem;
-                    }
-                    
-                    .toast-message {
-                        font-size: 0.95rem;
+
+                    .action-menu {
+                        position: fixed;
+                        bottom: 0;
+                        left: 0;
+                        right: 0;
+                        top: auto;
+                        border-radius: var(--border-radius) var(--border-radius) 0 0;
+                        max-height: 70vh;
+                        overflow-y: auto;
                     }
                 }
         
@@ -780,57 +750,18 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                 }
         
                 @media (hover: none) and (pointer: coarse) {
-                    .dropdown-backdrop {
-                        display: block;
-                        position: fixed;
-                        top: 0;
-                        left: 0;
-                        right: 0;
-                        bottom: 0;
-                        background: rgba(0, 0, 0, 0.5);
-                        z-index: 8999;
-                        opacity: 0;
-                        visibility: hidden;
-                        transition: opacity 0.3s ease, visibility 0.3s ease;
-                    }
-                    
-                    .dropdown-backdrop.show {
-                        opacity: 1;
-                        visibility: visible;
-                    }
-                    
                     .btn:hover {
+                        transform: none;
                         box-shadow: none;
                     }
             
                     .instance-card:hover {
+                        transform: none;
                         box-shadow: none;
                     }
-                    
-                    .actions-dropdown {
-                        position: fixed;
-                        left: var(--spacing-md);
-                        right: var(--spacing-md);
-                        bottom: var(--spacing-md);
-                        top: auto;
-                        max-height: 70vh;
-                        transform: translateY(100%);
-                        z-index: 9000;
-                        box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.9);
-                    }
-                    
-                    .actions-dropdown.show {
-                        transform: translateY(0);
-                    }
-                    
-                    .instance-card.dropup .actions-dropdown {
-                        bottom: var(--spacing-md);
-                        top: auto;
-                    }
-                    
-                    .action-item {
-                        padding: var(--spacing-md);
-                        font-size: 1rem;
+
+                    .action-menu-button:hover {
+                        transform: none;
                     }
                 }
             </style>
@@ -843,7 +774,10 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                             <h1>PokeBot Control Center</h1>
                             <div class=""status-indicator""></div>
                         </div>
-                        <button class=""btn"" onclick=""refreshInstances()"">🔄 Refresh</button>
+                        <div class=""refresh-status"">
+                            <span class=""refresh-indicator"" id=""refresh-indicator"" title=""Auto-refresh active""></span>
+                            <button class=""btn"" onclick=""manualRefresh()"" title=""Refresh now"">🔄 Refresh</button>
+                        </div>
                     </div>
                 </header>
                 <main class=""main"">
@@ -872,127 +806,100 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                     <div class=""toast-message""></div>
                 </div>
             </div>
-            <div id=""dropdown-backdrop"" class=""dropdown-backdrop""></div>
             <script>
                 const API_BASE = '/api/bot';
                 let instances = [];
                 let refreshInterval;
-                let openDropdowns = new Set();
+                let activeToasts = [];
+
+                let isInteracting = false;
+                let refreshPaused = false;
+                let lastRefreshTime = Date.now();
 
                 document.addEventListener('DOMContentLoaded', () => {
-                    // Initialize toast
-                    const toast = document.getElementById('toast');
-                    toast.style.transform = '';
-                    
                     refreshInstances();
-                    refreshInterval = setInterval(refreshInstances, 5000);
+                    startAutoRefresh();
                     
-                    // Close dropdowns when clicking outside
+                    // Close menus when clicking outside
                     document.addEventListener('click', (e) => {
-                        if (!e.target.closest('.instance-actions')) {
-                            closeAllDropdowns();
+                        if (!e.target.closest('.instance-controls')) {
+                            document.querySelectorAll('.action-menu.show').forEach(menu => {
+                                menu.classList.remove('show');
+                            });
                         }
                     });
-                    
-                    // Close dropdowns when clicking backdrop
-                    const backdrop = document.getElementById('dropdown-backdrop');
-                    if (backdrop) {
-                        backdrop.addEventListener('click', closeAllDropdowns);
-                    }
-                    
-                    // Close dropdowns on scroll
-                    let scrollTimeout;
-                    window.addEventListener('scroll', () => {
-                        clearTimeout(scrollTimeout);
-                        scrollTimeout = setTimeout(() => {
-                            closeAllDropdowns();
-                        }, 100);
-                    }, { passive: true });
+
+                    // Track mouse interaction
+                    document.addEventListener('mouseenter', (e) => {
+                        if (e.target.closest('.instance-card')) {
+                            isInteracting = true;
+                        }
+                    }, true);
+
+                    document.addEventListener('mouseleave', (e) => {
+                        if (e.target.closest('.instance-card')) {
+                            isInteracting = false;
+                        }
+                    }, true);
+
+                    // Track touch interaction
+                    document.addEventListener('touchstart', (e) => {
+                        if (e.target.closest('.instance-card')) {
+                            isInteracting = true;
+                        }
+                    });
+
+                    document.addEventListener('touchend', () => {
+                        setTimeout(() => {
+                            isInteracting = false;
+                        }, 500);
+                    });
                 });
 
                 window.addEventListener('beforeunload', () => {
                     if (refreshInterval) clearInterval(refreshInterval);
                 });
 
-                function closeAllDropdowns() {
-                    document.querySelectorAll('.actions-toggle').forEach(toggle => {
-                        toggle.classList.remove('open');
-                    });
-                    document.querySelectorAll('.actions-dropdown').forEach(dropdown => {
-                        dropdown.classList.remove('show');
-                    });
-                    document.querySelectorAll('.instance-card').forEach(card => {
-                        card.classList.remove('dropdown-open', 'dropup');
-                    });
-                    const backdrop = document.getElementById('dropdown-backdrop');
-                    if (backdrop) {
-                        backdrop.classList.remove('show');
-                    }
-                    openDropdowns.clear();
-                }
-
-                function toggleActionsDropdown(port, event) {
-                    event.stopPropagation();
-                    const toggle = event.currentTarget;
-                    const dropdown = toggle.nextElementSibling;
-                    const card = toggle.closest('.instance-card');
-                    const isOpen = toggle.classList.contains('open');
-                    const isMobile = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
-                    
-                    // Check if dropdown would go off screen
-                    const rect = toggle.getBoundingClientRect();
-                    const spaceBelow = window.innerHeight - rect.bottom;
-                    const dropdownHeight = 350; // approximate max height
-                    
-                    if (!isMobile && spaceBelow < dropdownHeight && rect.top > dropdownHeight) {
-                        card.classList.add('dropup');
-                    } else {
-                        card.classList.remove('dropup');
-                    }
-                    
-                    // Close all other dropdowns
-                    document.querySelectorAll('.actions-toggle').forEach(t => {
-                        if (t !== toggle) t.classList.remove('open');
-                    });
-                    document.querySelectorAll('.actions-dropdown').forEach(d => {
-                        if (d !== dropdown) d.classList.remove('show');
-                    });
-                    document.querySelectorAll('.instance-card').forEach(c => {
-                        if (c !== card) c.classList.remove('dropdown-open', 'dropup');
-                    });
-                    
-                    // Handle backdrop on mobile
-                    const backdrop = document.getElementById('dropdown-backdrop');
-                    if (isMobile) {
-                        if (isOpen) {
-                            backdrop.classList.remove('show');
+                function startAutoRefresh() {
+                    refreshInterval = setInterval(() => {
+                        const hasOpenMenu = document.querySelector('.action-menu.show') !== null;
+                        const timeSinceLastRefresh = Date.now() - lastRefreshTime;
+                        const indicator = document.getElementById('refresh-indicator');
+                        
+                        // Update indicator
+                        if (hasOpenMenu || isInteracting || refreshPaused) {
+                            indicator.classList.add('paused');
+                            indicator.title = 'Auto-refresh paused';
                         } else {
-                            backdrop.classList.add('show');
+                            indicator.classList.remove('paused');
+                            indicator.title = 'Auto-refresh active';
                         }
-                    }
-                    
-                    // Toggle current dropdown
-                    if (isOpen) {
-                        toggle.classList.remove('open');
-                        dropdown.classList.remove('show');
-                        card.classList.remove('dropdown-open');
-                        openDropdowns.delete(port);
-                    } else {
-                        toggle.classList.add('open');
-                        dropdown.classList.add('show');
-                        card.classList.add('dropdown-open');
-                        openDropdowns.add(port);
-                    }
+                        
+                        // Only refresh if no menus are open, not interacting, and not manually paused
+                        if (!hasOpenMenu && !isInteracting && !refreshPaused && timeSinceLastRefresh >= 5000) {
+                            refreshInstances();
+                        }
+                    }, 1000); // Check every second but only refresh when conditions are met
                 }
 
-                async function refreshInstances() {
+                async function refreshInstances(isManual = false) {
                     try {
+                        // Don't refresh if menu is open and it's not a manual refresh
+                        if (!isManual && document.querySelector('.action-menu.show')) {
+                            return;
+                        }
+
+                        lastRefreshTime = Date.now();
                         const response = await fetch(`${API_BASE}/instances`);
                         if (!response.ok) throw new Error('Failed to fetch instances');
                 
                         const data = await response.json();
                         instances = data.Instances;
-                        renderInstances();
+                        
+                        // Only render if no menus are open or it's a manual refresh
+                        if (!document.querySelector('.action-menu.show') || isManual) {
+                            renderInstances();
+                        }
                     } catch (error) {
                         console.error('Error fetching instances:', error);
                         showError('Failed to load bot instances. Make sure the bot is running.');
@@ -1042,8 +949,6 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                                 instanceStatusText = 'Idle';
                             }
                         }
-                        
-                        const isDropdownOpen = openDropdowns.has(instance.Port);
                 
                         return `
                         <div class=""instance-card ${statusClass}"" data-port=""${instance.Port}"">
@@ -1097,44 +1002,79 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                                 </div>
                                 ` : ''}
                         
-                                <div class=""instance-actions"">
-                                    <button class=""btn actions-toggle ${isDropdownOpen ? 'open' : ''}"" 
-                                            onclick=""toggleActionsDropdown(${instance.Port}, event)"" 
-                                            ${!isOnline ? 'disabled' : ''}>
-                                        <span>Instance Actions</span>
-                                        <span class=""chevron"">▼</span>
+                                <div class=""instance-controls"">
+                                    <button class=""action-menu-button"" onclick=""toggleActionMenu(event, ${instance.Port})"" ${!isOnline ? 'disabled' : ''}>
+                                        ⚡ Actions <span style=""font-size: 0.75rem;"">▼</span>
                                     </button>
-                                    <div class=""actions-dropdown ${isDropdownOpen ? 'show' : ''}"">
-                                        <div class=""action-item success"" onclick=""sendInstanceCommand(${instance.Port}, 'start')"">
-                                            <span>▶</span> Start
-                                        </div>
-                                        <div class=""action-item danger"" onclick=""sendInstanceCommand(${instance.Port}, 'stop')"">
-                                            <span>⏹</span> Stop
-                                        </div>
-                                        <div class=""action-item warning"" onclick=""sendInstanceCommand(${instance.Port}, 'idle')"">
-                                            <span>⏸</span> Idle
-                                        </div>
-                                        <div class=""action-item"" onclick=""sendInstanceCommand(${instance.Port}, 'resume')"">
-                                            <span>⏯</span> Resume
-                                        </div>
-                                        <div class=""action-item"" onclick=""confirmAndSendCommand(${instance.Port}, 'restart')"">
-                                            <span>🔄</span> Restart
-                                        </div>
-                                        <div class=""action-item danger"" onclick=""sendInstanceCommand(${instance.Port}, 'reboot')"">
-                                            <span>🔌</span> Reboot Game
-                                        </div>
-                                        <div class=""action-item"" onclick=""sendInstanceCommand(${instance.Port}, 'screenon')"">
-                                            <span>💡</span> Screen On
-                                        </div>
-                                        <div class=""action-item"" onclick=""sendInstanceCommand(${instance.Port}, 'screenoff')"">
-                                            <span>🌙</span> Screen Off
-                                        </div>
+                                    <div class=""action-menu"" id=""action-menu-${instance.Port}"">
+                                        <button class=""action-menu-item success"" onclick=""sendInstanceCommand(${instance.Port}, 'start')"">
+                                            ▶️ Start
+                                        </button>
+                                        <button class=""action-menu-item danger"" onclick=""sendInstanceCommand(${instance.Port}, 'stop')"">
+                                            ⏹️ Stop
+                                        </button>
+                                        <button class=""action-menu-item warning"" onclick=""sendInstanceCommand(${instance.Port}, 'idle')"">
+                                            ⏸️ Idle
+                                        </button>
+                                        <button class=""action-menu-item"" onclick=""sendInstanceCommand(${instance.Port}, 'resume')"">
+                                            ⏯️ Resume
+                                        </button>
+                                        <div class=""action-menu-divider""></div>
+                                        <button class=""action-menu-item"" onclick=""sendInstanceCommand(${instance.Port}, 'restart')"">
+                                            🔄 Restart
+                                        </button>
+                                        <button class=""action-menu-item danger"" onclick=""sendInstanceCommand(${instance.Port}, 'reboot')"">
+                                            🔌 Reboot
+                                        </button>
+                                        <div class=""action-menu-divider""></div>
+                                        <button class=""action-menu-item"" onclick=""sendInstanceCommand(${instance.Port}, 'screenon')"">
+                                            💡 Screen On
+                                        </button>
+                                        <button class=""action-menu-item"" onclick=""sendInstanceCommand(${instance.Port}, 'screenoff')"">
+                                            🌙 Screen Off
+                                        </button>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     `;
                     }).join('');
+                }
+
+                function manualRefresh() {
+                    // Close all menus
+                    document.querySelectorAll('.action-menu.show').forEach(menu => {
+                        menu.classList.remove('show');
+                    });
+                    
+                    // Force refresh
+                    refreshInstances(true);
+                    showToast('info', 'Refreshed', 'Bot instances refreshed');
+                }
+
+                function toggleActionMenu(event, port) {
+                    event.stopPropagation();
+                    const menu = document.getElementById(`action-menu-${port}`);
+                    const allMenus = document.querySelectorAll('.action-menu');
+                    
+                    // Close all other menus
+                    allMenus.forEach(m => {
+                        if (m.id !== `action-menu-${port}`) {
+                            m.classList.remove('show');
+                        }
+                    });
+                    
+                    // Toggle current menu
+                    const wasOpen = menu.classList.contains('show');
+                    menu.classList.toggle('show');
+                    
+                    // Update interaction state
+                    isInteracting = !wasOpen;
+                    
+                    // If we just closed the last menu, allow refresh again
+                    if (wasOpen && !document.querySelector('.action-menu.show')) {
+                        isInteracting = false;
+                    }
                 }
 
                 function getStatusColor(status) {
@@ -1191,25 +1131,20 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                             showToast('error', 'Command Failed', `Failed to send command to any instances`);
                         }
                 
-                        setTimeout(refreshInstances, 1000);
+                        setTimeout(() => refreshInstances(true), 1000);
                     } catch (error) {
                         console.error('Error sending global command:', error);
                         showToast('error', 'Error', `Failed to send command: ${command}`);
                     }
                 }
 
-                function confirmAndSendCommand(port, command) {
-                    if (command === 'restart') {
-                        if (confirm('Are you sure you want to restart the connection?')) {
-                            sendInstanceCommand(port, command);
-                        }
-                    } else {
-                        sendInstanceCommand(port, command);
-                    }
-                }
-
                 async function sendInstanceCommand(port, command) {
-                    closeAllDropdowns();
+                    // Close action menu
+                    document.getElementById(`action-menu-${port}`).classList.remove('show');
+                    
+                    // Clear interaction state
+                    isInteracting = false;
+                    
                     showToast('info', 'Sending Command', `Sending ${command} to instance on port ${port}...`);
             
                     try {
@@ -1228,7 +1163,7 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                             showToast('error', 'Command Failed', result.Message || 'Unknown error');
                         }
                 
-                        setTimeout(refreshInstances, 1000);
+                        setTimeout(() => refreshInstances(true), 1000);
                     } catch (error) {
                         console.error(`Error sending command to port ${port}:`, error);
                         showToast('error', 'Error', `Failed to send command to instance on port ${port}`);
@@ -1241,30 +1176,18 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                 }
 
                 function showToast(type, title, message) {
-                    const toast = document.getElementById('toast');
+                    const toastId = Date.now();
+                    const toast = document.getElementById('toast').cloneNode(true);
+                    toast.id = `toast-${toastId}`;
+                    
                     const icon = toast.querySelector('.toast-icon');
                     const titleEl = toast.querySelector('.toast-title');
                     const messageEl = toast.querySelector('.toast-message');
             
-                    // Clear any existing timeout
-                    if (window.toastTimeout) {
-                        clearTimeout(window.toastTimeout);
-                        window.toastTimeout = null;
-                    }
-                    
-                    // Remove show class to reset animation
-                    toast.classList.remove('show');
-                    
-                    // Force browser to recalculate styles
-                    void toast.offsetHeight;
-            
                     titleEl.textContent = title;
                     messageEl.textContent = message;
             
-                    // Reset classes
                     toast.className = 'toast';
-                    
-                    // Add type-specific styling
                     switch(type) {
                         case 'success':
                             icon.textContent = '✅';
@@ -1284,18 +1207,45 @@ public class BotServer(Main mainForm, int port = 8080, int tcpPort = 8081) : IDi
                             toast.classList.add('info');
                             break;
                     }
-            
-                    // Show toast with slight delay to ensure animation works
+                    
+                    document.body.appendChild(toast);
+                    activeToasts.push(toastId);
+                    
+                    // Adjust position for multiple toasts
+                    const toastHeight = 80; // Approximate height including margin
+                    const bottomOffset = activeToasts.indexOf(toastId) * toastHeight;
+                    
+                    if (window.innerWidth <= 768) {
+                        toast.style.bottom = `${bottomOffset}px`;
+                    } else {
+                        toast.style.bottom = `${32 + bottomOffset}px`;
+                    }
+                    
+                    // Force reflow before adding show class
+                    toast.offsetHeight;
+                    
                     requestAnimationFrame(() => {
-                        requestAnimationFrame(() => {
-                            toast.classList.add('show');
-                        });
+                        toast.classList.add('show');
                     });
             
-                    // Hide after delay
-                    window.toastTimeout = setTimeout(() => {
+                    setTimeout(() => {
                         toast.classList.remove('show');
-                        window.toastTimeout = null;
+                        setTimeout(() => {
+                            toast.remove();
+                            activeToasts = activeToasts.filter(id => id !== toastId);
+                            
+                            // Reposition remaining toasts
+                            activeToasts.forEach((id, index) => {
+                                const remainingToast = document.getElementById(`toast-${id}`);
+                                if (remainingToast) {
+                                    if (window.innerWidth <= 768) {
+                                        remainingToast.style.bottom = `${index * toastHeight}px`;
+                                    } else {
+                                        remainingToast.style.bottom = `${32 + index * toastHeight}px`;
+                                    }
+                                }
+                            });
+                        }, 300);
                     }, 4000);
                 }
             </script>
