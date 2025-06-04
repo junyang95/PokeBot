@@ -15,6 +15,12 @@ For support on setting up your own instance of PokeBot, feel free to join the di
 ![image](https://github.com/user-attachments/assets/9cd4dd57-0095-4353-8fba-5cb5b9417bd6)
 
 # Noteworthy Features
+- **Locally Hosted Control Panel** 
+Control all of your bots with a simple to use control panel via `http://localhost:8080` on your host machine.
+
+![image](https://github.com/user-attachments/assets/27dbad7a-52f6-4311-8949-4c50ec444cf4)
+
+
 - Live Log Searching through the Log tab.  Search for anything and find results fast.
 
 ![image](https://github.com/user-attachments/assets/820d8892-ae52-4aa6-981a-cb57d1c32690)
@@ -22,6 +28,33 @@ For support on setting up your own instance of PokeBot, feel free to join the di
 - Tray Support - When you press X to close out of the program, it goes to the system tray.  Right click the PokeBot icon in the tray to exit or control the bot.
 
 ![image](https://github.com/user-attachments/assets/3a30b334-955c-4fb3-b7d8-60cd005a2e18)
+
+
+# 📱 Access PokeBot from Any Device on Your Network
+
+## Quick Setup
+
+### 1. Enable Network Access (choose one):
+- **Option A:** Right-click PokeBot.exe → Run as Administrator
+- **Option B:** Run in admin cmd: `netsh http add urlacl url=http://+:8080/ user=Everyone`
+
+### 2. Allow Through Firewall:
+Run in admin cmd:
+```cmd
+netsh advfirewall firewall add rule name="PokeBot Web" dir=in action=allow protocol=TCP localport=8080
+```
+
+### 3. Connect From Your Phone:
+- Get your PC's IP: `ipconfig` (look for IPv4 Address)
+- On your phone: `http://YOUR-PC-IP:8080`
+- Example: `http://192.168.1.100:8080`
+
+## Requirements
+- Same WiFi network
+- Windows Firewall rule (step 2)
+- Admin rights (first time only)
+
+---
 
 # Pokémon Trading Bot Commands
 
