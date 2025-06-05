@@ -128,7 +128,7 @@ namespace SysBot.Pokemon.WinForms
             LoadControls();
             Text = $"{(string.IsNullOrEmpty(Config.Hub.BotName) ? "PokeBot" : Config.Hub.BotName)} {PokeBot.Version} ({Config.Mode})";
             trayIcon.Text = Text;
-            Task.Run(BotMonitor);
+            _ = Task.Run(BotMonitor);
             InitUtil.InitializeStubs(Config.Mode);
             _isFormLoading = false;
             UpdateBackgroundImage(Config.Mode);
