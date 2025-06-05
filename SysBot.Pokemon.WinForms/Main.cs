@@ -24,7 +24,10 @@ namespace SysBot.Pokemon.WinForms
     {
         public readonly List<PokeBotState> Bots = new();
         public IReadOnlyList<PokeBotState> BotStates => Bots.AsReadOnly();
-        public ProgramConfig Config { get; set; }
+
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        internal ProgramConfig Config { get; set; }
+
         private IPokeBotRunner RunningEnvironment { get; set; }
 
         public readonly ISwitchConnectionAsync? SwitchConnection;
@@ -129,7 +132,17 @@ namespace SysBot.Pokemon.WinForms
             InitUtil.InitializeStubs(Config.Mode);
             _isFormLoading = false;
             UpdateBackgroundImage(Config.Mode);
-            this.InitWebServer();
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    this.InitWebServer();
+                }
+                catch (Exception ex)
+                {
+                    LogUtil.LogError($"Failed to initialize web server: {ex.Message}", "System");
+                }
+            });
             LogUtil.LogInfo($"Bot initialization complete", "System");
         }
 

@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using SysBot.Pokemon.Helpers;
 using SysBot.Base;
 using SysBot.Pokemon.WinForms.WebApi;
 
@@ -437,26 +438,7 @@ public static class WebApiExtensions
 
     private static string GetVersion()
     {
-        try
-        {
-            var tradeBotType = Type.GetType("SysBot.Pokemon.Helpers.PokeBot, SysBot.Pokemon");
-            if (tradeBotType != null)
-            {
-                var versionField = tradeBotType.GetField("Version",
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-                if (versionField != null)
-                {
-                    return versionField.GetValue(null)?.ToString() ?? "Unknown";
-                }
-            }
-
-            // Fallback to assembly version
-            return _main!.GetType().Assembly.GetName().Version?.ToString() ?? "Unknown";
-        }
-        catch
-        {
-            return "Unknown";
-        }
+        return PokeBot.Version;
     }
 
     private static string GetInstanceName(ProgramConfig? config, string mode)
@@ -521,7 +503,7 @@ public static class WebApiExtensions
     {
         try
         {
-            using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(1) };
+            using var client = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMilliseconds(200) };
             var response = client.GetAsync($"http://localhost:{port}/api/bot/instances").Result;
             return response.IsSuccessStatusCode;
         }
@@ -532,7 +514,7 @@ public static class WebApiExtensions
             {
                 using var tcpClient = new TcpClient();
                 var result = tcpClient.BeginConnect("127.0.0.1", port, null, null);
-                var success = result.AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(1));
+                var success = result.AsyncWaitHandle.WaitOne(TimeSpan.FromMilliseconds(200));
                 if (success)
                 {
                     tcpClient.EndConnect(result);
