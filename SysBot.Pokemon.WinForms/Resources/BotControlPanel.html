@@ -782,6 +782,7 @@
                     <button class="btn" onclick="sendGlobalCommand('reboot')">🔌 Reboot All</button>
                     <button class="btn" onclick="sendGlobalCommand('screenon')">💡 Screen On</button>
                     <button class="btn" onclick="sendGlobalCommand('screenoff')">🌙 Screen Off</button>
+                    <button class="btn btn-primary" onclick="updateAllInstances()">⬆️ Update All</button>
                 </div>
             </div>
             <div id="instances-container" class="instances-grid">
@@ -849,6 +850,55 @@
         window.addEventListener('beforeunload', () => {
             if (refreshInterval) clearInterval(refreshInterval);
         });
+
+        async function updateAllInstances() {
+            // Don't pause refresh - we want to see the progress
+            showToast('info', 'Checking Updates', 'Checking all instances for updates...');
+
+            try {
+                const response = await fetch(`${API_BASE}/update/all`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (!response.ok) throw new Error('Update check failed');
+
+                const result = await response.json();
+
+                if (result.UpdatesNeeded === 0) {
+                    showToast('info', 'No Updates', 'All instances are already up to date');
+                } else if (result.UpdatesStarted > 0) {
+                    showToast('success', 'Updates Started',
+                        `Starting sequential updates for ${result.UpdatesStarted} instances. The master instance will update last.`);
+
+                    // Show detailed results
+                    if (result.Results && result.Results.length > 0) {
+                        let updateCount = 0;
+                        result.Results.forEach(r => {
+                            if (r.NeedsUpdate && r.UpdateStarted) {
+                                updateCount++;
+                                setTimeout(() => {
+                                    showToast('info', `Update ${updateCount}/${result.UpdatesStarted}`,
+                                        `Port ${r.Port}: Updating from ${r.CurrentVersion} to ${r.LatestVersion}`);
+                                }, updateCount * 1000);
+                            } else if (r.Error) {
+                                showToast('error', `Port ${r.Port}`, r.Error);
+                            }
+                        });
+                    }
+
+                    // Keep refreshing to show update progress
+                } else if (result.UpdatesFailed > 0) {
+                    showToast('error', 'Update Failed',
+                        `Failed to update ${result.UpdatesFailed} instances`);
+                } else {
+                    showToast('warning', 'Update Status', 'No updates were started');
+                }
+            } catch (error) {
+                console.error('Error updating instances:', error);
+                showToast('error', 'Error', 'Failed to check for updates');
+            }
+        }
 
         function startAutoRefresh() {
             refreshInterval = setInterval(() => {
