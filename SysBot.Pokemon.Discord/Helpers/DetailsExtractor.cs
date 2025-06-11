@@ -135,9 +135,10 @@ public static class DetailsExtractor<T> where T : PKM, new()
         embedData.HeldItem = strings.itemlist[pk.HeldItem];
         embedData.Ball = strings.balllist[pk.Ball];
 
-        int[] ivs = GetIVs(pk);
+        Span<int> ivs = stackalloc int[6];
+        pk.GetIVs(ivs);
         string ivsDisplay;
-        if (ivs.All(iv => iv == 31))
+        if (ivs.ToArray().All(iv => iv == 31))
         {
             ivsDisplay = "6IV";
         }
@@ -321,13 +322,6 @@ public static class DetailsExtractor<T> where T : PKM, new()
         string mysteryGiftEmoji = pk.FatefulEncounter ? SysCord<T>.Runner.Config.Trade.TradeEmbedSettings.MysteryGiftEmoji.EmojiString : "";
 
         return shinySymbol + alphaSymbol + mightyMarkSymbol + alphaMarkSymbol + mysteryGiftEmoji + displayGender + (!string.IsNullOrEmpty(markTitle) ? $"{markTitle} " : "");
-    }
-
-    private static int[] GetIVs(T pk)
-    {
-        int[] ivs = new int[6];
-        pk.GetIVs(ivs);
-        return ivs;
     }
 
     private static string GetTeraTypeString(PK9 pk9)
