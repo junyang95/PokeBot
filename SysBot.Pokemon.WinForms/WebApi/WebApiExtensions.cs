@@ -79,7 +79,9 @@ public static class WebApiExtensions
                             var process = Process.GetProcessById(pid);
                             if (process.ProcessName.Contains("SysBot", StringComparison.OrdinalIgnoreCase) ||
                                 process.ProcessName.Contains("PokeBot", StringComparison.OrdinalIgnoreCase))
+                            {
                                 continue;
+                            }
                         }
                         catch (ArgumentException)
                         {
