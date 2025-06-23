@@ -366,34 +366,7 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
         content = ReusableActions.StripCodeBlock(content);
         bool isEgg = TradeExtensions<T>.IsEggCheck(content);
 
-        string finalContent = content;
-        List<string> initialCorrectionMessages = [];
-        bool preCorrected = false;
-
-        // Parse the showdown set
-        _ = ShowdownParsing.TryParseAnyLanguage(finalContent, out ShowdownSet? set);
-
-        // If parsing failed or species is 0, try AutoCorrect if enabled
-        if ((set == null || set.Species == 0) && Info.Hub.Config.Trade.AutoCorrectConfig.EnableAutoCorrect)
-        {
-            try
-            {
-                var (CorrectedContent, CorrectionMessages) = await AutoCorrectShowdown<T>.PerformAutoCorrect(finalContent, Info.Hub.Config.Trade.AutoCorrectConfig);
-
-                // Try parsing the corrected content
-                if (ShowdownParsing.TryParseAnyLanguage(CorrectedContent, out var correctedSet) && correctedSet != null && correctedSet.Species != 0)
-                {
-                    finalContent = CorrectedContent;
-                    initialCorrectionMessages = CorrectionMessages;
-                    preCorrected = true;
-                    set = correctedSet;
-                }
-            }
-            catch (Exception ex)
-            {
-                LogUtil.LogSafe(ex, "AutoCorrect Pre-Processing");
-            }
-        }
+        _ = ShowdownParsing.TryParseAnyLanguage(content, out ShowdownSet? set);
 
         if (set == null || set.Species == 0)
         {
@@ -402,7 +375,6 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
         }
 
         byte finalLanguage = LanguageHelper.GetFinalLanguage(content, set, (byte)Info.Hub.Config.Legality.GenerateLanguage, TradeExtensions<T>.DetectShowdownLanguage);
-
         var template = AutoLegalityWrapper.GetTemplate(set);
 
         if (set.InvalidLines.Count != 0)
@@ -455,83 +427,37 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
                     }
                 }
 
-                T pk;
-                bool setEdited = preCorrected;
-                List<string> allCorrectionMessages = new List<string>(initialCorrectionMessages);
-
-                if (pkm is not T initialPk || !la.Valid || !string.IsNullOrEmpty(set.Form.ToString()))
+                if (pkm is not T pk || !la.Valid)
                 {
-                    if (Info.Hub.Config.Trade.AutoCorrectConfig.EnableAutoCorrect && !la.Valid)
-                    {
-                        var (CorrectedContent, CorrectionMessages) = await AutoCorrectShowdown<T>.PerformAutoCorrect(finalContent, Info.Hub.Config.Trade.AutoCorrectConfig, pkm, la);
-                        string secondaryCorrection = CorrectedContent;
-                        List<string> secondaryCorrectionMessages = CorrectionMessages;
+                    var reason = result == "Timeout" ? $"That {spec} set took too long to generate." :
+                                 result == "VersionMismatch" ? "Request refused: PKHeX and Auto-Legality Mod version mismatch." :
+                                 $"I wasn't able to create a {spec} from that set.";
 
-                        if (secondaryCorrectionMessages.Count > 0)
+                    var embedBuilder = new EmbedBuilder()
+                        .WithTitle("Trade Creation Failed.")
+                        .WithColor(Color.Red)
+                        .AddField("Status", $"Failed to create {spec}.")
+                        .AddField("Reason", reason);
+
+                    if (result == "Failed")
+                    {
+                        var legalizationHint = AutoLegalityWrapper.GetLegalizationHint(template, sav, pkm);
+                        if (legalizationHint.Contains("Requested shiny value (ShinyType."))
                         {
-                            set = new ShowdownSet(secondaryCorrection);
-                            template = AutoLegalityWrapper.GetTemplate(set);
-                            finalLanguage = LanguageHelper.GetFinalLanguage(secondaryCorrection, set, (byte)Info.Hub.Config.Legality.GenerateLanguage, TradeExtensions<T>.DetectShowdownLanguage);
-                            sav = LanguageHelper.GetTrainerInfoWithLanguage<T>((LanguageID)finalLanguage);
-                            pkm = sav.GetLegal(template, out result);
-                            la = new LegalityAnalysis(pkm);
-                            setEdited = true;
-                            allCorrectionMessages.AddRange(secondaryCorrectionMessages);
-                            finalContent = secondaryCorrection;
+                            legalizationHint = $"{spec} **cannot** be shiny. Please try again.";
+                        }
+
+                        if (!string.IsNullOrEmpty(legalizationHint))
+                        {
+                            embedBuilder.AddField("Hint", legalizationHint);
                         }
                     }
 
-                    if (pkm is not T correctedPk || !la.Valid)
-                    {
-                        var reason = result == "Timeout" ? $"That {spec} set took too long to generate." :
-                                     result == "VersionMismatch" ? "Request refused: PKHeX and Auto-Legality Mod version mismatch." :
-                                     $"I wasn't able to create a {spec} from that set.";
-
-                        var embedBuilder = new EmbedBuilder()
-                            .WithTitle("Trade Creation Failed.")
-                            .WithColor(Color.Red)
-                            .AddField("Status", $"Failed to create {spec}.")
-                            .AddField("Reason", reason);
-
-                        if (result == "Failed")
-                        {
-                            var legalizationHint = AutoLegalityWrapper.GetLegalizationHint(template, sav, pkm);
-                            if (legalizationHint.Contains("Requested shiny value (ShinyType."))
-                            {
-                                legalizationHint = $"{spec} **cannot** be shiny. Please try again.";
-                            }
-
-                            if (!string.IsNullOrEmpty(legalizationHint))
-                            {
-                                embedBuilder.AddField("Hint", legalizationHint);
-                            }
-                        }
-
-                        string userMention = Context.User.Mention;
-                        string messageContent = $"{userMention}, here's the report for your request:";
-                        var message = await Context.Channel.SendMessageAsync(text: messageContent, embed: embedBuilder.Build()).ConfigureAwait(false);
-                        _ = DeleteMessagesAfterDelayAsync(message, Context.Message, 30);
-                        return;
-                    }
-                    pk = correctedPk;
-                }
-                else
-                {
-                    pk = (T)pkm;
-                }
-
-                if (allCorrectionMessages.Count > 0 && la.Valid)
-                {
-                    var userName = Context.User.Mention;
-                    var changesEmbed = new EmbedBuilder()
-                        .WithTitle("Showdown Set Corrections")
-                        .WithColor(Color.Orange)
-                        .WithThumbnailUrl("https://raw.githubusercontent.com/bdawg1989/sprites/main/profoak.png")
-                        .WithDescription(string.Join("\n", allCorrectionMessages))
-                        .AddField("Corrected Showdown Set:", $"```{finalContent}```")
-                        .Build();
-                    var correctionMessage = await ReplyAsync($"{userName}, here are the corrections we made to your Showdown set:", embed: changesEmbed).ConfigureAwait(false);
-                    _ = DeleteMessagesAfterDelayAsync(correctionMessage, Context.Message, 30);
+                    string userMention = Context.User.Mention;
+                    string messageContent = $"{userMention}, here's the report for your request:";
+                    var message = await Context.Channel.SendMessageAsync(text: messageContent, embed: embedBuilder.Build()).ConfigureAwait(false);
+                    _ = DeleteMessagesAfterDelayAsync(message, Context.Message, 30);
+                    return;
                 }
 
                 TradeExtensions<T>.CheckAndSetUnrivaledDate(pk);
@@ -558,7 +484,7 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
                 }
 
                 var sig = Context.User.GetFavor();
-                await AddTradeToQueueAsync(code, Context.User.Username, pk, sig, Context.User, isBatchTrade: false, batchTradeNumber: 1, totalBatchTrades: 1, true, false, lgcode: lgcode, ignoreAutoOT: ignoreAutoOT, setEdited: setEdited).ConfigureAwait(false);
+                await AddTradeToQueueAsync(code, Context.User.Username, pk, sig, Context.User, isBatchTrade: false, batchTradeNumber: 1, totalBatchTrades: 1, true, false, lgcode: lgcode, ignoreAutoOT: ignoreAutoOT, setEdited: false).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -643,45 +569,15 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
         content = ReusableActions.StripCodeBlock(content);
         bool isEgg = TradeExtensions<T>.IsEggCheck(content);
 
-        string finalContent = content;
-        List<string> initialCorrectionMessages = [];
-        bool preCorrected = false;
+        _ = ShowdownParsing.TryParseAnyLanguage(content, out ShowdownSet? set);
 
-        // Parse the showdown set
-        _ = ShowdownParsing.TryParseAnyLanguage(finalContent, out ShowdownSet? set);
-
-        // If parsing failed or species is 0, try AutoCorrect if enabled
-        if ((set == null || set.Species == 0) && Info.Hub.Config.Trade.AutoCorrectConfig.EnableAutoCorrect)
-        {
-            try
-            {
-                var (CorrectedContent, CorrectionMessages) = await AutoCorrectShowdown<T>.PerformAutoCorrect(finalContent, Info.Hub.Config.Trade.AutoCorrectConfig);
-
-                // Try parsing the corrected content
-                if (ShowdownParsing.TryParseAnyLanguage(CorrectedContent, out var correctedSet) && correctedSet != null && correctedSet.Species != 0)
-                {
-                    finalContent = CorrectedContent;
-                    initialCorrectionMessages = CorrectionMessages;
-                    preCorrected = true;
-                    set = correctedSet;
-                }
-            }
-            catch (Exception ex)
-            {
-                LogUtil.LogSafe(ex, "AutoCorrect Pre-Processing");
-            }
-        }
-
-        // Final validation
         if (set == null || set.Species == 0)
         {
             await ReplyAsync("Unable to parse Showdown set. Could not identify the Pokémon species.");
             return;
         }
 
-        // Determine the final language to use
         byte finalLanguage = LanguageHelper.GetFinalLanguage(content, set, (byte)Info.Hub.Config.Legality.GenerateLanguage, TradeExtensions<T>.DetectShowdownLanguage);
-
         var template = AutoLegalityWrapper.GetTemplate(set);
 
         if (set.InvalidLines.Count != 0)
@@ -695,7 +591,6 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
         {
             try
             {
-                // Get trainer info with the correct language
                 var sav = LanguageHelper.GetTrainerInfoWithLanguage<T>((LanguageID)finalLanguage);
                 var pkm = sav.GetLegal(template, out var result);
                 if (pkm == null)
@@ -734,85 +629,37 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
                     }
                 }
 
-                T pk;
-                bool setEdited = preCorrected;
-                List<string> allCorrectionMessages = new List<string>(initialCorrectionMessages);
-
-                if (pkm is not T initialPk || !la.Valid || !string.IsNullOrEmpty(set.Form.ToString()))
+                if (pkm is not T pk || !la.Valid)
                 {
-                    if (Info.Hub.Config.Trade.AutoCorrectConfig.EnableAutoCorrect && !la.Valid)
-                    {
-                        var (CorrectedContent, CorrectionMessages) = await AutoCorrectShowdown<T>.PerformAutoCorrect(finalContent, Info.Hub.Config.Trade.AutoCorrectConfig, pkm, la);
-                        string secondaryCorrection = CorrectedContent;
-                        List<string> secondaryCorrectionMessages = CorrectionMessages;
+                    var reason = result == "Timeout" ? $"That {spec} set took too long to generate." :
+                                 result == "VersionMismatch" ? "Request refused: PKHeX and Auto-Legality Mod version mismatch." :
+                                 $"I wasn't able to create a {spec} from that set.";
 
-                        if (secondaryCorrectionMessages.Count > 0)
+                    var embedBuilder = new EmbedBuilder()
+                        .WithTitle("Trade Creation Failed.")
+                        .WithColor(Color.Red)
+                        .AddField("Status", $"Failed to create {spec}.")
+                        .AddField("Reason", reason);
+
+                    if (result == "Failed")
+                    {
+                        var legalizationHint = AutoLegalityWrapper.GetLegalizationHint(template, sav, pkm);
+                        if (legalizationHint.Contains("Requested shiny value (ShinyType."))
                         {
-                            set = new ShowdownSet(secondaryCorrection);
-                            template = AutoLegalityWrapper.GetTemplate(set);
-                            // Recalculate language in case it changed
-                            finalLanguage = LanguageHelper.GetFinalLanguage(secondaryCorrection, set, (byte)Info.Hub.Config.Legality.GenerateLanguage, TradeExtensions<T>.DetectShowdownLanguage);
-                            sav = LanguageHelper.GetTrainerInfoWithLanguage<T>((LanguageID)finalLanguage);
-                            pkm = sav.GetLegal(template, out result);
-                            la = new LegalityAnalysis(pkm);
-                            setEdited = true;
-                            allCorrectionMessages.AddRange(secondaryCorrectionMessages);
-                            finalContent = secondaryCorrection;
+                            legalizationHint = $"{spec} **cannot** be shiny. Please try again.";
+                        }
+
+                        if (!string.IsNullOrEmpty(legalizationHint))
+                        {
+                            embedBuilder.AddField("Hint", legalizationHint);
                         }
                     }
 
-                    if (pkm is not T correctedPk || !la.Valid)
-                    {
-                        var reason = result == "Timeout" ? $"That {spec} set took too long to generate." :
-                                     result == "VersionMismatch" ? "Request refused: PKHeX and Auto-Legality Mod version mismatch." :
-                                     $"I wasn't able to create a {spec} from that set.";
-
-                        var embedBuilder = new EmbedBuilder()
-                            .WithTitle("Trade Creation Failed.")
-                            .WithColor(Color.Red)
-                            .AddField("Status", $"Failed to create {spec}.")
-                            .AddField("Reason", reason);
-
-                        if (result == "Failed")
-                        {
-                            var legalizationHint = AutoLegalityWrapper.GetLegalizationHint(template, sav, pkm);
-                            if (legalizationHint.Contains("Requested shiny value (ShinyType."))
-                            {
-                                legalizationHint = $"{spec} **cannot** be shiny. Please try again.";
-                            }
-
-                            if (!string.IsNullOrEmpty(legalizationHint))
-                            {
-                                embedBuilder.AddField("Hint", legalizationHint);
-                            }
-                        }
-
-                        string userMention = Context.User.Mention;
-                        string messageContent = $"{userMention}, here's the report for your request:";
-                        var message = await Context.Channel.SendMessageAsync(text: messageContent, embed: embedBuilder.Build()).ConfigureAwait(false);
-                        _ = DeleteMessagesAfterDelayAsync(message, Context.Message, 30);
-                        return;
-                    }
-                    pk = correctedPk;
-                }
-                else
-                {
-                    pk = (T)pkm;
-                }
-
-                // Show corrections if any were made
-                if (allCorrectionMessages.Count > 0 && la.Valid)
-                {
-                    var userName = Context.User.Mention;
-                    var changesEmbed = new EmbedBuilder()
-                        .WithTitle("Showdown Set Corrections")
-                        .WithColor(Color.Orange)
-                        .WithThumbnailUrl("https://raw.githubusercontent.com/bdawg1989/sprites/main/profoak.png")
-                        .WithDescription(string.Join("\n", allCorrectionMessages))
-                        .AddField("Corrected Showdown Set:", $"```{finalContent}```")
-                        .Build();
-                    var correctionMessage = await ReplyAsync($"{userName}, here are the corrections we made to your Showdown set:", embed: changesEmbed).ConfigureAwait(false);
-                    _ = DeleteMessagesAfterDelayAsync(correctionMessage, Context.Message, 30);
+                    string userMention = Context.User.Mention;
+                    string messageContent = $"{userMention}, here's the report for your request:";
+                    var message = await Context.Channel.SendMessageAsync(text: messageContent, embed: embedBuilder.Build()).ConfigureAwait(false);
+                    _ = DeleteMessagesAfterDelayAsync(message, Context.Message, 30);
+                    return;
                 }
 
                 TradeExtensions<T>.CheckAndSetUnrivaledDate(pk);
@@ -820,7 +667,6 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
                 if (pk.WasEgg)
                     pk.EggMetDate = pk.MetDate;
 
-                // Set the final language on the Pokemon
                 pk.Language = finalLanguage;
 
                 if (!set.Nickname.Equals(pk.Nickname) && string.IsNullOrEmpty(set.Nickname))
@@ -840,7 +686,7 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
                 }
 
                 var sig = Context.User.GetFavor();
-                await AddTradeToQueueAsync(code, Context.User.Username, pk, sig, Context.User, isBatchTrade: false, batchTradeNumber: 1, totalBatchTrades: 1, lgcode: lgcode, ignoreAutoOT: ignoreAutoOT, setEdited: setEdited).ConfigureAwait(false);
+                await AddTradeToQueueAsync(code, Context.User.Username, pk, sig, Context.User, isBatchTrade: false, batchTradeNumber: 1, totalBatchTrades: 1, lgcode: lgcode, ignoreAutoOT: ignoreAutoOT, setEdited: false).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -1084,45 +930,15 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
         tradeContent = ReusableActions.StripCodeBlock(tradeContent);
         var ignoreAutoOT = tradeContent.Contains("OT:") || tradeContent.Contains("TID:") || tradeContent.Contains("SID:");
 
-        string finalContent = tradeContent;
-        List<string> initialCorrectionMessages = [];
-        bool preCorrected = false;
+        _ = ShowdownParsing.TryParseAnyLanguage(tradeContent, out ShowdownSet? set);
 
-        // Parse the showdown set
-        _ = ShowdownParsing.TryParseAnyLanguage(finalContent, out ShowdownSet? set);
-
-        // If parsing failed or species is 0, try AutoCorrect if enabled
-        if ((set == null || set.Species == 0) && Info.Hub.Config.Trade.AutoCorrectConfig.EnableAutoCorrect)
-        {
-            try
-            {
-                var (CorrectedContent, CorrectionMessages) = await AutoCorrectShowdown<T>.PerformAutoCorrect(finalContent, Info.Hub.Config.Trade.AutoCorrectConfig);
-
-                // Try parsing the corrected content
-                if (ShowdownParsing.TryParseAnyLanguage(CorrectedContent, out var correctedSet) && correctedSet != null && correctedSet.Species != 0)
-                {
-                    finalContent = CorrectedContent;
-                    initialCorrectionMessages = CorrectionMessages;
-                    preCorrected = true;
-                    set = correctedSet;
-                }
-            }
-            catch (Exception ex)
-            {
-                LogUtil.LogSafe(ex, "AutoCorrect Pre-Processing");
-            }
-        }
-
-        // Final validation
         if (set == null || set.Species == 0)
         {
             await ReplyAsync("Unable to parse Showdown set. Could not identify the Pokémon species.");
             return;
         }
 
-        // Determine the final language to use
         byte finalLanguage = LanguageHelper.GetFinalLanguage(tradeContent, set, (byte)Info.Hub.Config.Legality.GenerateLanguage, TradeExtensions<T>.DetectShowdownLanguage);
-
         var template = AutoLegalityWrapper.GetTemplate(set);
 
         if (set.InvalidLines.Count != 0)
@@ -1136,7 +952,6 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
         {
             try
             {
-                // Get trainer info with the correct language
                 var sav = LanguageHelper.GetTrainerInfoWithLanguage<T>((LanguageID)finalLanguage);
                 var pkm = sav.GetLegal(template, out var result);
                 if (pkm == null)
@@ -1148,88 +963,37 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
                 var la = new LegalityAnalysis(pkm);
                 var spec = GameInfo.Strings.Species[template.Species];
 
-                T pk;
-                bool setEdited = preCorrected;
-                List<string> allCorrectionMessages = new List<string>(initialCorrectionMessages);
-
-                if (pkm is not T initialPk || !la.Valid || !string.IsNullOrEmpty(set.Form.ToString()))
+                if (pkm is not T pk || !la.Valid)
                 {
-                    if (Info.Hub.Config.Trade.AutoCorrectConfig.EnableAutoCorrect && !la.Valid)
+                    var reason = result == "Timeout" ? $"That {spec} set took too long to generate." :
+                                 result == "VersionMismatch" ? "Request refused: PKHeX and Auto-Legality Mod version mismatch." :
+                                 $"I wasn't able to create a {spec} from that set.";
+
+                    var embedBuilder = new EmbedBuilder()
+                        .WithTitle("Trade Creation Failed.")
+                        .WithColor(Color.Red)
+                        .AddField("Status", $"Failed to create {spec}.")
+                        .AddField("Reason", reason);
+
+                    if (result == "Failed")
                     {
-                        var (CorrectedContent, CorrectionMessages) = await AutoCorrectShowdown<T>.PerformAutoCorrect(finalContent, Info.Hub.Config.Trade.AutoCorrectConfig, pkm, la);
-                        string secondaryCorrection = CorrectedContent;
-                        List<string> secondaryCorrectionMessages = CorrectionMessages;
-
-                        if (secondaryCorrectionMessages.Count > 0)
+                        var legalizationHint = AutoLegalityWrapper.GetLegalizationHint(template, sav, pkm);
+                        if (legalizationHint.Contains("Requested shiny value (ShinyType."))
                         {
-                            set = new ShowdownSet(secondaryCorrection);
-                            template = AutoLegalityWrapper.GetTemplate(set);
+                            legalizationHint = $"{spec} **cannot** be shiny. Please try again.";
+                        }
 
-                            // Recalculate language in case it changed
-                            finalLanguage = LanguageHelper.GetFinalLanguage(secondaryCorrection, set, (byte)Info.Hub.Config.Legality.GenerateLanguage, TradeExtensions<T>.DetectShowdownLanguage);
-                            sav = LanguageHelper.GetTrainerInfoWithLanguage<T>((LanguageID)finalLanguage);
-
-                            pkm = sav.GetLegal(template, out result);
-                            la = new LegalityAnalysis(pkm);
-                            setEdited = true;
-                            allCorrectionMessages.AddRange(secondaryCorrectionMessages);
-                            finalContent = secondaryCorrection;
+                        if (!string.IsNullOrEmpty(legalizationHint))
+                        {
+                            embedBuilder.AddField("Hint", legalizationHint);
                         }
                     }
 
-                    if (pkm is not T correctedPk || !la.Valid)
-                    {
-                        var reason = result == "Timeout" ? $"That {spec} set took too long to generate." :
-                                     result == "VersionMismatch" ? "Request refused: PKHeX and Auto-Legality Mod version mismatch." :
-                                     $"I wasn't able to create a {spec} from that set.";
-
-                        var embedBuilder = new EmbedBuilder()
-                            .WithTitle("Trade Creation Failed.")
-                            .WithColor(Color.Red)
-                            .AddField("Status", $"Failed to create {spec}.")
-                            .AddField("Reason", reason);
-
-                        if (result == "Failed")
-                        {
-                            var legalizationHint = AutoLegalityWrapper.GetLegalizationHint(template, sav, pkm);
-                            if (legalizationHint.Contains("Requested shiny value (ShinyType."))
-                            {
-                                legalizationHint = $"{spec} **cannot** be shiny. Please try again.";
-                            }
-
-                            if (!string.IsNullOrEmpty(legalizationHint))
-                            {
-                                embedBuilder.AddField("Hint", legalizationHint);
-                            }
-                        }
-
-                        string userMention = Context.User.Mention;
-                        string messageContent = $"{userMention}, here's the report for your request:";
-                        var message = await Context.Channel.SendMessageAsync(text: messageContent, embed: embedBuilder.Build()).ConfigureAwait(false);
-                        _ = DeleteMessagesAfterDelayAsync(message, Context.Message, 30);
-                        return;
-                    }
-
-                    pk = correctedPk;
-                }
-                else
-                {
-                    pk = (T)pkm;
-                }
-
-                // Show corrections if any were made
-                if (allCorrectionMessages.Count > 0 && la.Valid)
-                {
-                    var userName = Context.User.Mention;
-                    var changesEmbed = new EmbedBuilder()
-                        .WithTitle("Showdown Set Corrections")
-                        .WithColor(Color.Orange)
-                        .WithThumbnailUrl("https://raw.githubusercontent.com/bdawg1989/sprites/main/profoak.png")
-                        .WithDescription(string.Join("\n", allCorrectionMessages))
-                        .AddField("Corrected Showdown Set:", $"```{finalContent}```")
-                        .Build();
-                    var correctionMessage = await ReplyAsync($"{userName}, here are the corrections we made to your Showdown set:", embed: changesEmbed).ConfigureAwait(false);
-                    _ = DeleteMessagesAfterDelayAsync(correctionMessage, Context.Message, 30);
+                    string userMention = Context.User.Mention;
+                    string messageContent = $"{userMention}, here's the report for your request:";
+                    var message = await Context.Channel.SendMessageAsync(text: messageContent, embed: embedBuilder.Build()).ConfigureAwait(false);
+                    _ = DeleteMessagesAfterDelayAsync(message, Context.Message, 30);
+                    return;
                 }
 
                 if (pkm is PA8)
@@ -1258,7 +1022,6 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
                 if (pkm.WasEgg)
                     pkm.EggMetDate = pkm.MetDate;
 
-                // Set the final language on the Pokemon
                 pk.Language = finalLanguage;
 
                 if (!set.Nickname.Equals(pk.Nickname) && string.IsNullOrEmpty(set.Nickname))
@@ -1286,7 +1049,7 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
                 }
 
                 var sig = Context.User.GetFavor();
-                await AddTradeToQueueAsync(batchTradeCode, Context.User.Username, pk, sig, Context.User, isBatchTrade, batchTradeNumber, totalBatchTrades, lgcode: lgcode, tradeType: PokeTradeType.Batch, ignoreAutoOT: ignoreAutoOT, setEdited: setEdited).ConfigureAwait(false);
+                await AddTradeToQueueAsync(batchTradeCode, Context.User.Username, pk, sig, Context.User, isBatchTrade, batchTradeNumber, totalBatchTrades, lgcode: lgcode, tradeType: PokeTradeType.Batch, ignoreAutoOT: ignoreAutoOT, setEdited: false).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
