@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -17,6 +18,10 @@ namespace SysBot.Pokemon.WinForms
         private readonly bool isUpdateRequired;
         private readonly bool isUpdateAvailable;
         private readonly string newVersion;
+        private const string _githubToken = ""; // TODO: Move to secure configuration or environment variable
+
+        // Make token publicly accessible
+        public static string GitHubToken => _githubToken;
 
 #pragma warning disable CS8618 // Non-nullable field must contain a non-null value when exiting constructor. Consider declaring as nullable.
         public UpdateForm(bool updateRequired, string newVersion, bool updateAvailable)
@@ -106,26 +111,6 @@ namespace SysBot.Pokemon.WinForms
             }
         }
 
-        public async void PerformUpdate()
-        {
-            buttonDownload.Enabled = false;
-            buttonDownload.Text = "Downloading...";
-
-            try
-            {
-                string? downloadUrl = await UpdateChecker.FetchDownloadUrlAsync();
-                if (!string.IsNullOrWhiteSpace(downloadUrl))
-                {
-                    string downloadedFilePath = await StartDownloadProcessAsync(downloadUrl);
-                    if (!string.IsNullOrEmpty(downloadedFilePath))
-                    {
-                        InstallUpdate(downloadedFilePath);
-                    }
-                }
-            }
-            catch { }
-        }
-
         private async Task FetchAndDisplayChangelog()
         {
             _ = new UpdateChecker();
@@ -165,24 +150,114 @@ namespace SysBot.Pokemon.WinForms
             }
         }
 
+        public async void PerformUpdate()
+        {
+            buttonDownload.Enabled = false;
+            buttonDownload.Text = "Downloading...";
+
+            try
+            {
+                string? downloadUrl = await UpdateChecker.FetchDownloadUrlAsync();
+                if (!string.IsNullOrWhiteSpace(downloadUrl))
+                {
+                    string downloadedFilePath = await StartDownloadProcessAsync(downloadUrl);
+                    if (!string.IsNullOrEmpty(downloadedFilePath))
+                    {
+                        InstallUpdate(downloadedFilePath);
+                    }
+                }
+            }
+            catch { }
+        }
+
         private static async Task<string> StartDownloadProcessAsync(string downloadUrl)
         {
             Main.IsUpdating = true;
             string tempPath = Path.Combine(Path.GetTempPath(), $"SysBot.Pokemon.WinForms_{Guid.NewGuid()}.exe");
+            
+            const int maxRetries = 3;
+            Exception? lastException = null;
 
-            using (var client = new HttpClient())
+            for (int retry = 0; retry < maxRetries; retry++)
             {
-                client.DefaultRequestHeaders.Add("User-Agent", "SysBot");
-                var response = await client.GetAsync(downloadUrl);
-                response.EnsureSuccessStatusCode();
-                var fileBytes = await response.Content.ReadAsByteArrayAsync();
-                await File.WriteAllBytesAsync(tempPath, fileBytes);
+                if (retry > 0)
+                {
+                    // Wait before retry (exponential backoff)
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, retry)));
+                    Console.WriteLine($"Retrying download attempt {retry + 1}/{maxRetries}...");
+                }
+
+                using (var client = new HttpClient())
+                {
+                    client.Timeout = TimeSpan.FromMinutes(10); // 10 minute timeout for downloads on slow connections
+                    client.DefaultRequestHeaders.Add("User-Agent", "MergeBot");
+                    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("token", GitHubToken);
+                    client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
+
+                    try
+                    {
+                        var response = await client.GetAsync(downloadUrl);
+                        response.EnsureSuccessStatusCode();
+                        
+                        // Download with progress tracking for large files
+                        using (var stream = await response.Content.ReadAsStreamAsync())
+                        {
+                            var totalBytes = response.Content.Headers.ContentLength ?? 0;
+                            var bytesRead = 0;
+                            var buffer = new byte[8192];
+                            
+                            using (var ms = new MemoryStream())
+                            {
+                                int read;
+                                while ((read = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                                {
+                                    await ms.WriteAsync(buffer, 0, read);
+                                    bytesRead += read;
+                                    
+                                    if (totalBytes > 0)
+                                    {
+                                        var progress = (int)((bytesRead * 100L) / totalBytes);
+                                        Console.WriteLine($"Download progress: {progress}%");
+                                    }
+                                }
+                                
+                                var fileBytes = ms.ToArray();
+                                await File.WriteAllBytesAsync(tempPath, fileBytes);
+                            }
+                        }
+                        Console.WriteLine($"Successfully downloaded update to {tempPath}");
+                        return tempPath;
+                    }
+                    catch (TaskCanceledException ex)
+                    {
+                        Console.WriteLine($"Download timed out on attempt {retry + 1}: {ex.Message}");
+                        lastException = ex;
+                        if (File.Exists(tempPath))
+                            File.Delete(tempPath);
+                    }
+                    catch (HttpRequestException ex)
+                    {
+                        Console.WriteLine($"Download failed on attempt {retry + 1}: {ex.Message}");
+                        lastException = ex;
+                        if (File.Exists(tempPath))
+                            File.Delete(tempPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error during download on attempt {retry + 1}: {ex.Message}");
+                        lastException = ex;
+                        if (File.Exists(tempPath))
+                            File.Delete(tempPath);
+                    }
+                }
             }
 
-            return tempPath;
+            // All retries failed
+            Console.WriteLine($"Failed to download update after {maxRetries} attempts");
+            throw lastException ?? new Exception("Download failed after all retry attempts");
         }
 
-        private void InstallUpdate(string downloadedFilePath)
+        private static void InstallUpdate(string downloadedFilePath)
         {
             try
             {
@@ -194,27 +269,27 @@ namespace SysBot.Pokemon.WinForms
                 // Create batch file for update process
                 string batchPath = Path.Combine(Path.GetTempPath(), "UpdateSysBot.bat");
                 string batchContent = @$"
-                                            @echo off
-                                            timeout /t 2 /nobreak >nul
-                                            echo Updating SysBot...
+                                        @echo off
+                                        timeout /t 2 /nobreak >nul
+                                        echo Updating SysBot...
 
-                                            rem Backup current version
-                                            if exist ""{currentExePath}"" (
-                                                if exist ""{backupPath}"" (
-                                                    del ""{backupPath}""
-                                                )
-                                                move ""{currentExePath}"" ""{backupPath}""
+                                        rem Backup current version
+                                        if exist ""{currentExePath}"" (
+                                            if exist ""{backupPath}"" (
+                                                del ""{backupPath}""
                                             )
+                                            move ""{currentExePath}"" ""{backupPath}""
+                                        )
 
-                                            rem Install new version
-                                            move ""{downloadedFilePath}"" ""{currentExePath}""
+                                        rem Install new version
+                                        move ""{downloadedFilePath}"" ""{currentExePath}""
 
-                                            rem Start new version
-                                            start """" ""{currentExePath}""
+                                        rem Start new version
+                                        start """" ""{currentExePath}""
 
-                                            rem Clean up
-                                            del ""%~f0""
-                                            ";
+                                        rem Clean up
+                                        del ""%~f0""
+                                        ";
 
                 File.WriteAllText(batchPath, batchContent);
 
