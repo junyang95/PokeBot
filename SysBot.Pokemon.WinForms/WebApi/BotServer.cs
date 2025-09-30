@@ -1110,10 +1110,10 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         
         try
         {
-            var process = Process.GetProcessById(processId);
+            using var process = Process.GetProcessById(processId);
             return process.MainModule?.FileName;
         }
-        catch 
+        catch
         {
             return null;
         }
