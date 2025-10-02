@@ -3,7 +3,6 @@ using SysBot.Base;
 using SysBot.Pokemon.Discord;
 using SysBot.Pokemon.Helpers;
 using SysBot.Pokemon.WinForms.Properties;
-using SysBot.Pokemon.WinForms.Controls;
 using SysBot.Pokemon.WinForms.Helpers;
 using SysBot.Pokemon.Z3;
 using System;
@@ -53,7 +52,6 @@ namespace SysBot.Pokemon.WinForms
         private bool _isFormLoading = true;
 
         private SearchManager _searchManager = null!;
-        private LogViewerForwarder _logViewerForwarder = null!;
         private TextBoxForwarder _textBoxForwarder = null!;
 
         internal bool hasUpdate = false;
@@ -96,9 +94,6 @@ namespace SysBot.Pokemon.WinForms
 
             _searchManager = new SearchManager(RTB_Logs, searchStatusLabel);
             ConfigureSearchEventHandlers();
-
-            // Initialize log viewer forwarder
-            _logViewerForwarder = new LogViewerForwarder();
         }
 
         private void ConfigureSearchEventHandlers()
@@ -441,7 +436,6 @@ namespace SysBot.Pokemon.WinForms
 
             _textBoxForwarder = new TextBoxForwarder(RTB_Logs);
             LogUtil.Forwarders.Add(_textBoxForwarder);
-            LogUtil.Forwarders.Add(_logViewerForwarder);
         }
 
         private ProgramConfig GetCurrentConfiguration()
@@ -460,7 +454,6 @@ namespace SysBot.Pokemon.WinForms
 
             // Remove log forwarders to prevent memory leaks
             LogUtil.Forwarders.Remove(_textBoxForwarder);
-            LogUtil.Forwarders.Remove(_logViewerForwarder);
 
             // Let the form close normally when X button is clicked
             // No longer minimizing to tray on close
