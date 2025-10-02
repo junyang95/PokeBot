@@ -1021,13 +1021,7 @@ namespace SysBot.Pokemon.WinForms
             
             // Force normal window state
             WindowState = FormWindowState.Normal;
-            
-            // Immediately restart the logo animation timer
-            if (animationTimer != null && !animationTimer.Enabled)
-            {
-                animationTimer.Start();
-            }
-            
+
             // Ensure window is properly restored and focused
             BringToFront();
             Activate();
@@ -1066,14 +1060,7 @@ namespace SysBot.Pokemon.WinForms
                     {
                         bot.ResumeAnimations();
                     }
-                    
-                    // Double-check logo animation timer is running
-                    if (animationTimer != null && !animationTimer.Enabled)
-                    {
-                        animationTimer.Stop(); // Stop first to reset
-                        animationTimer.Start();
-                    }
-                    
+
                     // Schedule bot state updates asynchronously
                     Task.Run(async () =>
                     {
@@ -1110,13 +1097,7 @@ namespace SysBot.Pokemon.WinForms
             {
                 bot.PauseAnimations();
             }
-            
-            // Stop logo animation timer
-            if (animationTimer != null && animationTimer.Enabled)
-            {
-                animationTimer.Stop();
-            }
-            
+
             Hide();
             ShowInTaskbar = false;
             trayIcon.Visible = true;
@@ -1144,11 +1125,6 @@ namespace SysBot.Pokemon.WinForms
                 {
                     bot.PauseAnimations();
                 }
-                // Also pause logo animation timer
-                if (animationTimer != null && animationTimer.Enabled)
-                {
-                    animationTimer.Stop();
-                }
             }
             else if (WindowState == FormWindowState.Normal || WindowState == FormWindowState.Maximized)
             {
@@ -1156,11 +1132,6 @@ namespace SysBot.Pokemon.WinForms
                 foreach (var bot in FLP_Bots.Controls.OfType<BotController>())
                 {
                     bot.ResumeAnimations();
-                }
-                // Also resume logo animation timer
-                if (animationTimer != null && !animationTimer.Enabled)
-                {
-                    animationTimer.Start();
                 }
             }
         }
@@ -1170,13 +1141,7 @@ namespace SysBot.Pokemon.WinForms
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
-            
-            // Ensure animation timer is running when form is shown
-            if (animationTimer != null && !animationTimer.Enabled)
-            {
-                animationTimer.Start();
-            }
-            
+
             // Reapply dark mode when form is shown (helps with tray restore)
             DarkModeHelper.SetDarkMode(this.Handle);
             
@@ -1187,13 +1152,7 @@ namespace SysBot.Pokemon.WinForms
         protected override void OnActivated(EventArgs e)
         {
             base.OnActivated(e);
-            
-            // Ensure animation timer is running when window is activated
-            if (animationTimer != null && !animationTimer.Enabled)
-            {
-                animationTimer.Start();
-            }
-            
+
             // Apply dark mode when window is activated
             if (_isRestoringFromTray)
             {
