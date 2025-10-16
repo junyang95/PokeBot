@@ -26,14 +26,14 @@ namespace SysBot.Pokemon.WinForms
     {
         // Windows API for forcing window frame update
         [System.Runtime.InteropServices.DllImport("user32.dll")]
-        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, 
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
             int X, int Y, int cx, int cy, uint uFlags);
-        
+
         private const uint SWP_NOMOVE = 0x0002;
         private const uint SWP_NOSIZE = 0x0001;
         private const uint SWP_NOZORDER = 0x0004;
         private const uint SWP_FRAMECHANGED = 0x0020;
-        
+
         // Performance optimization flags
         private bool _suspendLayout = false;
         private bool _deferredInvalidate = false;
@@ -45,6 +45,8 @@ namespace SysBot.Pokemon.WinForms
         internal ProgramConfig Config { get; set; } = null!;
 
         private IPokeBotRunner RunningEnvironment { get; set; } = null!;
+        // 暴露给外部读取（线程安全一点可用 Volatile/Interlocked，见方案 B）
+        public IPokeBotRunner? Runner => RunningEnvironment;
 
         public readonly ISwitchConnectionAsync? SwitchConnection;
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -70,20 +72,20 @@ namespace SysBot.Pokemon.WinForms
         {
             // Enable DPI awareness
             this.AutoScaleMode = AutoScaleMode.Dpi;
-            
+
             InitializeComponent();
-            
+
             // Performance optimizations
-            SetStyle(ControlStyles.AllPaintingInWmPaint | 
-                    ControlStyles.UserPaint | 
-                    ControlStyles.DoubleBuffer | 
+            SetStyle(ControlStyles.AllPaintingInWmPaint |
+                    ControlStyles.UserPaint |
+                    ControlStyles.DoubleBuffer |
                     ControlStyles.ResizeRedraw |
                     ControlStyles.OptimizedDoubleBuffer, true);
             UpdateStyles();
-            
+
             // Apply dark mode to the main window
             DarkModeHelper.SetDarkMode(this.Handle);
-            
+
             Load += async (sender, e) => await InitializeAsync();
 
             TC_Main = new TabControl { Visible = false };
@@ -125,8 +127,8 @@ namespace SysBot.Pokemon.WinForms
 
             try
             {
-                var (updateAvailable, _, _) = await UpdateChecker.CheckForUpdatesAsync();
-                hasUpdate = updateAvailable;
+                //var (updateAvailable, _, _) = await UpdateChecker.CheckForUpdatesAsync();
+                //hasUpdate = updateAvailable;
             }
             catch (Exception ex)
             {
@@ -212,7 +214,7 @@ namespace SysBot.Pokemon.WinForms
             _isFormLoading = false;
             UpdateBackgroundImage(Config.Mode);
             UpdateStatusIndicatorColor();
-            
+
             this.ActiveControl = null;
             LogUtil.LogInfo($"Bot initialization complete", "System");
             _ = Task.Run(() =>
@@ -331,7 +333,7 @@ namespace SysBot.Pokemon.WinForms
                             {
                                 runningBots = FLP_Bots.Controls.OfType<BotController>().Count(c => c.GetBot()?.IsRunning ?? false);
                                 totalBots = FLP_Bots.Controls.OfType<BotController>().Count();
-                                
+
                                 // Update tray icon text from UI thread
                                 string botTitle = string.IsNullOrWhiteSpace(Config.Hub.BotName) ? "PokéBot" : Config.Hub.BotName;
                                 trayIcon.Text = totalBots == 0
@@ -343,7 +345,7 @@ namespace SysBot.Pokemon.WinForms
                         {
                             runningBots = FLP_Bots.Controls.OfType<BotController>().Count(c => c.GetBot()?.IsRunning ?? false);
                             totalBots = FLP_Bots.Controls.OfType<BotController>().Count();
-                            
+
                             string botTitle = string.IsNullOrWhiteSpace(Config.Hub.BotName) ? "PokéBot" : Config.Hub.BotName;
                             trayIcon.Text = totalBots == 0
                                 ? $"{botTitle} - No bots configured"
@@ -434,7 +436,7 @@ namespace SysBot.Pokemon.WinForms
             comboBox1.ValueMember = "Value";
             comboBox1.DataSource = gameModes;
             comboBox1.SelectedValue = (int)Config.Mode;
-            
+
             // Apply enhanced styling to the game selector
             ConfigureGameSelector();
 
@@ -455,7 +457,7 @@ namespace SysBot.Pokemon.WinForms
         private void Main_FormClosing(object sender, FormClosingEventArgs e)
         {
             if (IsUpdating) return;
-            
+
             // Let the form close normally when X button is clicked
             // No longer minimizing to tray on close
             this.StopWebServer();
@@ -594,9 +596,9 @@ namespace SysBot.Pokemon.WinForms
                 await Task.Delay(3_500).ConfigureAwait(false);
                 SaveCurrentConfig();
                 LogUtil.LogInfo("Restarting all the consoles...", "Form");
-                
+
                 await Task.Delay(1_000).ConfigureAwait(false); // Give services time to fully stop
-                
+
                 RunningEnvironment.InitializeStart();
                 SendAll(BotControlCommand.RebootAndStop);
                 await Task.Delay(5_000).ConfigureAwait(false);
@@ -902,7 +904,7 @@ namespace SysBot.Pokemon.WinForms
                 var backgroundColor = (e.State & DrawItemState.Selected) == DrawItemState.Selected
                     ? Color.FromArgb(45, 125, 200)
                     : Color.FromArgb(32, 38, 48);
-                    
+
                 using (var bgBrush = new SolidBrush(backgroundColor))
                 {
                     e.Graphics.FillRectangle(bgBrush, e.Bounds);
@@ -911,7 +913,7 @@ namespace SysBot.Pokemon.WinForms
                 // Get the item text properly
                 string text = "";
                 var item = comboBox1.Items[e.Index];
-                
+
                 if (item != null)
                 {
                     // Handle anonymous type from DataSource
@@ -930,7 +932,7 @@ namespace SysBot.Pokemon.WinForms
                 var textColor = (e.State & DrawItemState.Selected) == DrawItemState.Selected
                     ? Color.White
                     : Color.FromArgb(239, 239, 239);
-                    
+
                 using (var textBrush = new SolidBrush(textColor))
                 {
                     var textRect = new Rectangle(e.Bounds.X + 8, e.Bounds.Y, e.Bounds.Width - 8, e.Bounds.Height);
@@ -941,7 +943,7 @@ namespace SysBot.Pokemon.WinForms
                     };
                     e.Graphics.DrawString(text, e.Font ?? comboBox1.Font, textBrush, textRect, format);
                 }
-                
+
                 if ((e.State & DrawItemState.Focus) == DrawItemState.Focus)
                 {
                     e.DrawFocusRectangle();
@@ -1012,42 +1014,42 @@ namespace SysBot.Pokemon.WinForms
         {
             // Set flag to prevent re-minimizing
             _isRestoringFromTray = true;
-            
+
             // Make visible in taskbar first
             ShowInTaskbar = true;
             trayIcon.Visible = false;
-            
+
             // Show the form without suspending layout
             Show();
-            
+
             // Force normal window state
             WindowState = FormWindowState.Normal;
-            
+
             // Immediately restart the logo animation timer
             if (animationTimer != null && !animationTimer.Enabled)
             {
                 animationTimer.Start();
             }
-            
+
             // Ensure window is properly restored and focused
             BringToFront();
             Activate();
             Focus();
-            
+
             // Apply dark mode after the window is fully shown
             // Use BeginInvoke to ensure it happens after the UI thread processes the show event
             BeginInvoke((MethodInvoker)(() =>
             {
                 DarkModeHelper.SetDarkMode(this.Handle);
-                
+
                 // Force a repaint of the non-client area
-                SetWindowPos(this.Handle, IntPtr.Zero, 0, 0, 0, 0, 
+                SetWindowPos(this.Handle, IntPtr.Zero, 0, 0, 0, 0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-                    
+
                 // Force proper panel layout after tray restore
                 EnsurePanelLayout();
             }));
-            
+
             // Clear the flag after a delay
             Task.Run(async () =>
             {
@@ -1055,7 +1057,7 @@ namespace SysBot.Pokemon.WinForms
                 _isRestoringFromTray = false;
                 _suspendLayout = false;
             });
-            
+
             // Update bots asynchronously without blocking UI
             if (TC_Main.SelectedTab == Tab_Bots && FLP_Bots.Controls.Count > 0)
             {
@@ -1067,30 +1069,30 @@ namespace SysBot.Pokemon.WinForms
                     {
                         bot.ResumeAnimations();
                     }
-                    
+
                     // Double-check logo animation timer is running
                     if (animationTimer != null && !animationTimer.Enabled)
                     {
                         animationTimer.Stop(); // Stop first to reset
                         animationTimer.Start();
                     }
-                    
+
                     // Schedule bot state updates asynchronously
                     Task.Run(async () =>
                     {
                         // Small delay to let UI fully restore
                         await Task.Delay(200);
-                        
+
                         BeginInvoke((MethodInvoker)(() =>
                         {
                             // Only update visible bots in viewport
                             var scrollPos = FLP_Bots.VerticalScroll.Value;
                             var viewportHeight = FLP_Bots.ClientSize.Height;
-                            
+
                             foreach (var bot in FLP_Bots.Controls.OfType<BotController>())
                             {
                                 // Check if bot is in visible viewport
-                                if (bot.Top >= scrollPos - bot.Height && 
+                                if (bot.Top >= scrollPos - bot.Height &&
                                     bot.Top <= scrollPos + viewportHeight)
                                 {
                                     bot.ReadState();
@@ -1105,19 +1107,19 @@ namespace SysBot.Pokemon.WinForms
         private void MinimizeToTray()
         {
             _suspendLayout = true;
-            
+
             // Pause animations on all bot controllers before hiding
             foreach (var bot in FLP_Bots.Controls.OfType<BotController>())
             {
                 bot.PauseAnimations();
             }
-            
+
             // Stop logo animation timer
             if (animationTimer != null && animationTimer.Enabled)
             {
                 animationTimer.Stop();
             }
-            
+
             Hide();
             ShowInTaskbar = false;
             trayIcon.Visible = true;
@@ -1136,7 +1138,7 @@ namespace SysBot.Pokemon.WinForms
         {
             // Don't minimize to tray on minimize button - only on close (X) button
             // The minimize button should just minimize normally to taskbar
-            
+
             // Handle window state changes to manage animations
             if (WindowState == FormWindowState.Minimized)
             {
@@ -1171,30 +1173,30 @@ namespace SysBot.Pokemon.WinForms
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
-            
+
             // Ensure animation timer is running when form is shown
             if (animationTimer != null && !animationTimer.Enabled)
             {
                 animationTimer.Start();
             }
-            
+
             // Reapply dark mode when form is shown (helps with tray restore)
             DarkModeHelper.SetDarkMode(this.Handle);
-            
+
             // Ensure panels are properly positioned
             EnsurePanelLayout();
         }
-        
+
         protected override void OnActivated(EventArgs e)
         {
             base.OnActivated(e);
-            
+
             // Ensure animation timer is running when window is activated
             if (animationTimer != null && !animationTimer.Enabled)
             {
                 animationTimer.Start();
             }
-            
+
             // Apply dark mode when window is activated
             if (_isRestoringFromTray)
             {
@@ -1203,51 +1205,51 @@ namespace SysBot.Pokemon.WinForms
                 EnsurePanelLayout();
             }
         }
-        
+
         private void EnsurePanelLayout()
         {
             // Skip if controls aren't ready
             if (contentPanel == null || headerPanel == null)
                 return;
-                
+
             // Force proper layout recalculation
             contentPanel.SuspendLayout();
-            
+
             // Fix z-order: headerPanel must be last (on top) for DockStyle.Top to work correctly
             // The order matters: panels docked with Fill should be added first, then Top-docked panels
             contentPanel.Controls.SetChildIndex(botsPanel, 0);
             contentPanel.Controls.SetChildIndex(hubPanel, 0);
             contentPanel.Controls.SetChildIndex(logsPanel, 0);
             contentPanel.Controls.SetChildIndex(headerPanel, contentPanel.Controls.Count - 1);
-            
+
             // Reset docking to force recalculation
             headerPanel.Dock = DockStyle.None;
             botsPanel.Dock = DockStyle.None;
             hubPanel.Dock = DockStyle.None;
             logsPanel.Dock = DockStyle.None;
-            
+
             // Force layout update
             contentPanel.PerformLayout();
-            
+
             // Reapply docking in correct order
             headerPanel.Dock = DockStyle.Top;
             headerPanel.Height = 60;
-            
+
             botsPanel.Dock = DockStyle.Fill;
             hubPanel.Dock = DockStyle.Fill;
             logsPanel.Dock = DockStyle.Fill;
-            
+
             contentPanel.ResumeLayout(true);
             contentPanel.PerformLayout();
         }
-        
+
         protected override void OnDpiChanged(DpiChangedEventArgs e)
         {
             base.OnDpiChanged(e);
-            
+
             // Update all controls for new DPI
             DpiHelper.UpdateDpiForControl(this);
-            
+
             // Update specific UI elements
             if (statusIndicator != null)
             {
@@ -1255,13 +1257,13 @@ namespace SysBot.Pokemon.WinForms
                 statusIndicator.Size = new Size(scaledSize, scaledSize);
                 statusIndicator.Location = DpiHelper.Scale(new Point(10, 6));
             }
-            
+
             // Update bot controllers
             foreach (var controller in FLP_Bots.Controls.OfType<BotController>())
             {
                 controller.PerformLayout();
             }
-            
+
             // Force layout update
             PerformLayout();
         }
@@ -1271,7 +1273,7 @@ namespace SysBot.Pokemon.WinForms
         private void InvalidateThrottled(Control control, Rectangle? rect = null)
         {
             if (_suspendLayout) return;
-            
+
             var now = DateTime.Now;
             if ((now - _lastInvalidate).TotalMilliseconds < INVALIDATE_THROTTLE_MS)
             {
@@ -1284,7 +1286,7 @@ namespace SysBot.Pokemon.WinForms
                 control.Invalidate(rect.Value);
             else
                 control.Invalidate();
-                
+
             if (_deferredInvalidate)
             {
                 _deferredInvalidate = false;
@@ -1300,13 +1302,13 @@ namespace SysBot.Pokemon.WinForms
         protected override void WndProc(ref Message m)
         {
             const int WM_NCPAINT = 0x0085;
-            
+
             // Skip non-client area painting for performance
             if (m.Msg == WM_NCPAINT && WindowState != FormWindowState.Normal)
             {
                 return;
             }
-            
+
             base.WndProc(ref m);
         }
 
