@@ -13,10 +13,10 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Drawing;
 using PKHeX.Core;
+using PKHeX.Core.AutoMod;
 using SysBot.Base;
 using SysBot.Pokemon.Discord;
 using SysBot.Pokemon.Helpers;
-using SysBot.Pokemon.WinForms.Controls;
 using SysBot.Pokemon.WinForms.WebApi.Models;
 using static SysBot.Pokemon.WinForms.WebApi.RestartManager;
 
@@ -58,15 +58,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         };
     }
 
-    // Regex patterns for performance
-    [System.Text.RegularExpressions.GeneratedRegex(@"^([A-Za-z]+-\d+)\s+(.+)$")]
-    private static partial System.Text.RegularExpressions.Regex BotNameRegex();
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"^\[Port:(\d+)\]\s+(.+)$")]
-    private static partial System.Text.RegularExpressions.Regex PortRegex();
-
-    [System.Text.RegularExpressions.GeneratedRegex(@"^(\S+)\s+(.+)$")]
-    private static partial System.Text.RegularExpressions.Regex ServiceRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex(@"[<>""'&;\/]")]
     private static partial System.Text.RegularExpressions.Regex CleanupRegex();
@@ -271,7 +263,6 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             response.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
         }
     }
-
     private async Task<(int statusCode, object? content, string contentType)> ProcessRequestAsync(HttpListenerRequest request)
     {
         var path = request.Url?.LocalPath ?? "";
@@ -281,7 +272,6 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             "/" => (200, HtmlTemplate, "text/html"),
             "/BotControlPanel.css" => (200, LoadEmbeddedResource("BotControlPanel.css"), "text/css"),
             "/BotControlPanel.js" => (200, LoadEmbeddedResource("BotControlPanel.js"), "text/javascript"),
-            "/api/logs" => await GetLogsAsync(request),
             "/api/bot/instances" => (200, await GetInstancesAsync(), "application/json"),
             var p when p.StartsWith("/api/bot/instances/") && p.EndsWith("/bots") =>
                 (200, await Task.FromResult(GetBots(ExtractPort(p))), "application/json"),
@@ -428,6 +418,14 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         content = "Iron Thorns @ Black Glasses\nAbility: Quark Drive\nLevel: 52\nShiny: Yes\nTera Type: Stellar\nEVs: 252 SpA / 252 SpD\nHardy Nature\n- Body Slam\n- Swords Dance\n- Ice Punch\n- Charge Beam\nBall: Dusk Ball\nShiny: Yes";
         content = ReusableActions.StripCodeBlock(content);
 
+        bool isEgg = ForGame(runner,
+            () => TradeExtensions<PK9>.IsEggCheck(content),
+            () => TradeExtensions<PK8>.IsEggCheck(content),
+            () => TradeExtensions<PB8>.IsEggCheck(content),
+            () => TradeExtensions<PA8>.IsEggCheck(content),
+            () => TradeExtensions<PB7>.IsEggCheck(content)
+        );
+
         if (!ShowdownParsing.TryParseAnyLanguage(content, out ShowdownSet? set) || set == null || set.Species == 0)
         {
             return JsonSerializer.Serialize(new
@@ -474,7 +472,20 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             () => LanguageHelper.GetTrainerInfoWithLanguage<PB7>((LanguageID)finalLanguage)
         );
 
-        var pkm = sav.GetLegal(template, out var result);
+        PKM pkm;
+        string result;
+
+        if (isEgg)
+        {
+            // Use ALM's GenerateEgg method for eggs
+            pkm = sav.GenerateEgg(template, out var eggResult);
+            result = eggResult.ToString();
+        }
+        else
+        {
+            // Use normal generation for non-eggs
+            pkm = sav.GetLegal(template, out result);
+        }
 
         if (pkm == null)
         {
@@ -488,45 +499,23 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         var la = new LegalityAnalysis(pkm);
         var spec = GameInfo.Strings.Species[template.Species];
 
-        bool isEgg = ForGame(runner,
-            () => TradeExtensions<PK9>.IsEggCheck(content),
-            () => TradeExtensions<PK8>.IsEggCheck(content),
-            () => TradeExtensions<PB8>.IsEggCheck(content),
-            () => TradeExtensions<PA8>.IsEggCheck(content),
-            () => TradeExtensions<PB7>.IsEggCheck(content)
-        );
-
-        if (isEgg && pkm is PKM eggPk)
+        // Apply standard item logic only for non-eggs
+        if (!isEgg)
         {
-            bool versionSpecified = content.Contains(".Version=", StringComparison.OrdinalIgnoreCase);
-
-            if (!versionSpecified)
-            {
-                if (eggPk is PB8 pb8)
-                    pb8.Version = GameVersion.BD;
-                else if (eggPk is PK8 pk8)
-                    pk8.Version = GameVersion.SW;
-            }
-            eggPk.IsNicknamed = false;
-
-            ForGame(runner,
-                () => TradeExtensions<PK9>.EggTrade(eggPk, AutoLegalityWrapper.GetTemplate(new ShowdownSet(content))),
-                () => TradeExtensions<PK8>.EggTrade(eggPk, AutoLegalityWrapper.GetTemplate(new ShowdownSet(content))),
-                () => TradeExtensions<PB8>.EggTrade(eggPk, AutoLegalityWrapper.GetTemplate(new ShowdownSet(content))),
-                () => TradeExtensions<PA8>.EggTrade(eggPk, AutoLegalityWrapper.GetTemplate(new ShowdownSet(content))),
-                () => TradeExtensions<PB7>.EggTrade(eggPk, AutoLegalityWrapper.GetTemplate(new ShowdownSet(content)))
-                );
-            pkm = eggPk;
-            la = new LegalityAnalysis(pkm);
+            ApplyStandardItemLogic(pkm);
         }
-        else
+
+        // Generate LGPE code if needed
+        if (pkm is PB7)
         {
-            pkm.HeldItem = pkm switch
+            if (pkm.Species == (int)Species.Mew && pkm.IsShiny)
             {
-                PA8 => (int)TradeSettings.TradeSettingsCategory.HeldItem.None,
-                _ when pkm.HeldItem == 0 && !pkm.IsEgg => (int)TradeSettings.TradeSettingsCategory.HeldItem.None,
-                _ => pkm.HeldItem
-            };
+                return JsonSerializer.Serialize(new
+                {
+                    success = false,
+                    info = "Mew can **not** be Shiny in LGPE. PoGo Mew does not transfer and Pokeball Plus Mew is shiny locked.",
+                }, JsonOptions);
+            }
         }
 
         if (!la.Valid)
@@ -653,6 +642,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         var trainer = new PokeTradeTrainerInfo(userName, userId);
         int uniqueTradeID = GenerateUniqueTradeID();
         var significance = RequestSignificance.None;
+        var added = QueueResultAdd.AlreadyInQueue;
 
         if (pkm is PK9 pk9 && runner is PokeBotRunner<PK9> runnerPk9)
         {
@@ -661,7 +651,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 lgcode, 1, 1, false, uniqueTradeID, false, false);
             var trade = new TradeEntry<PK9>(detail, userId, PokeRoutineType.LinkTrade, userName, uniqueTradeID);
 
-            var added = runnerPk9.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
+            added = runnerPk9.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
                 significance == RequestSignificance.Owner);
         } else if (pkm is PK8 pk8 && runner is PokeBotRunner<PK8> runnerPk8)
         {
@@ -670,7 +660,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 lgcode, 1, 1, false, uniqueTradeID, false, false);
             var trade = new TradeEntry<PK8>(detail, userId, PokeRoutineType.LinkTrade, userName, uniqueTradeID);
 
-            var added = runnerPk8.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
+            added = runnerPk8.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
                 significance == RequestSignificance.Owner);
         } else if (pkm is PB8 pb8 && runner is PokeBotRunner<PB8> runnerPb8)
         {
@@ -679,7 +669,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 lgcode, 1, 1, false, uniqueTradeID, false, false);
             var trade = new TradeEntry<PB8>(detail, userId, PokeRoutineType.LinkTrade, userName, uniqueTradeID);
 
-            var added = runnerPb8.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
+            added = runnerPb8.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
                 significance == RequestSignificance.Owner);
         } else if (pkm is PA8 pa8 && runner is PokeBotRunner<PA8> runnerPa8)
         {
@@ -688,7 +678,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 lgcode, 1, 1, false, uniqueTradeID, false, false);
             var trade = new TradeEntry<PA8>(detail, userId, PokeRoutineType.LinkTrade, userName, uniqueTradeID);
 
-            var added = runnerPa8.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
+            added = runnerPa8.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
                 significance == RequestSignificance.Owner);
         }
         else if (pkm is PB7 pb7 && runner is PokeBotRunner<PB7> runnerPb7)
@@ -698,7 +688,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 lgcode, 1, 1, false, uniqueTradeID, false, false);
             var trade = new TradeEntry<PB7>(detail, userId, PokeRoutineType.LinkTrade, userName, uniqueTradeID);
 
-            var added = runnerPb7.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
+            added = runnerPb7.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
                 significance == RequestSignificance.Owner);
         }
         else
@@ -706,12 +696,38 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             throw new Exception("Unknown trade type");
         }
 
+        if (added == QueueResultAdd.AlreadyInQueue)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                info = "您已经在等待队列中了,请先完成交换",
+            }, JsonOptions);
+        }
+
 
         return JsonSerializer.Serialize(new
         {
             success = true,
-            info = code,
+            info = new
+            {
+                uniqueTradeID = uniqueTradeID,
+                userId = userId,
+                userName = userName,
+                tradeCode = code,
+                pkmSpecies = spec,
+            },
         }, JsonOptions);
+    }
+
+    public static void ApplyStandardItemLogic(PKM pkm)
+    {
+        pkm.HeldItem = pkm switch
+        {
+            PA8 => (int)TradeSettings.TradeSettingsCategory.HeldItem.None,
+            _ when pkm.HeldItem == 0 && !pkm.IsEgg => (int)TradeSettings.TradeSettingsCategory.HeldItem.None,
+            _ => pkm.HeldItem
+        };
     }
 
     private static int GenerateUniqueTradeID()
@@ -1390,7 +1406,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         const int endPort = 8090; // Reduced from 8181 to 8090 for faster scanning
         const int maxConcurrentScans = 5; // Throttle concurrent connections
 
-        var semaphore = new SemaphoreSlim(maxConcurrentScans, maxConcurrentScans);
+        using var semaphore = new SemaphoreSlim(maxConcurrentScans, maxConcurrentScans);
         var tasks = new List<Task>();
 
         for (int port = startPort; port <= endPort; port++)
@@ -1574,7 +1590,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
 
         try
         {
-            var process = Process.GetProcessById(processId);
+            using var process = Process.GetProcessById(processId);
             return process.MainModule?.FileName;
         }
         catch
@@ -1973,202 +1989,6 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         return JsonSerializer.Serialize(ApiResponseFactory.CreateSimpleError(message), JsonOptions);
     }
 
-    private async Task<(int statusCode, object? content, string contentType)> GetLogsAsync(HttpListenerRequest request)
-    {
-        try
-        {
-            var query = System.Web.HttpUtility.ParseQueryString(request.Url?.Query ?? "");
-            var port = SanitizeQueryParameter(query["port"], 10);
-            var search = SanitizeQueryParameter(query["search"], 100);
-            var source = SanitizeQueryParameter(query["source"], 50);
-            var level = SanitizeQueryParameter(query["level"], 20);
-
-            // Determine which log file to read based on the requested port
-            string logFile;
-            if (!string.IsNullOrEmpty(port) && int.TryParse(port, out var portNumber) && portNumber != _tcpPort)
-            {
-                // Remote instance - get its log file path
-                var instanceInfo = await GetInstanceInfoAsync(portNumber);
-                if (instanceInfo == null || string.IsNullOrEmpty(instanceInfo.ProcessPath))
-                {
-                    LogUtil.LogError($"Could not determine process path for port {port}", "WebServer");
-                    return (200, JsonSerializer.Serialize(new { logs = Array.Empty<object>() }), "application/json");
-                }
-
-                var remoteWorkingDirectory = Path.GetDirectoryName(instanceInfo.ProcessPath)!;
-                logFile = Path.Combine(remoteWorkingDirectory, "logs", "SysBotLog.txt");
-            }
-            else
-            {
-                // Local instance - use current process path
-                var workingDirectory = Path.GetDirectoryName(Environment.ProcessPath)!;
-                logFile = Path.Combine(workingDirectory, "logs", "SysBotLog.txt");
-            }
-
-            if (!File.Exists(logFile))
-            {
-                LogUtil.LogError($"Log file not found at: {logFile}", "WebServer");
-                return (200, JsonSerializer.Serialize(new { logs = Array.Empty<object>() }), "application/json");
-            }
-
-            // Read entire log file
-            var allLines = await ReadAllLinesAsync(logFile);
-            var logs = new List<object>();
-
-            // Process all lines first to get the newest 500
-            var parsedLogs = new List<(string timestamp, string level, string identity, string message, int port)>();
-
-            foreach (var line in allLines)
-            {
-                if (string.IsNullOrWhiteSpace(line))
-                    continue;
-
-                // Parse NLog format: "2024-01-01 12:00:00.1234|INFO|SysBot.Base.LogUtil|Identity Message"
-                var parts = line.Split('|');
-                if (parts.Length < 4)
-                    continue;
-
-                var timestamp = parts[0].Trim();
-                var logLevel = parts[1].Trim().ToLower();
-                var logger = parts[2].Trim(); // e.g., "SysBot.Base.LogUtil"
-                var content = string.Join("|", parts.Skip(3)); // Join remaining parts in case message contains |
-
-                // Filter by level if specified
-                if (!string.IsNullOrEmpty(level) && !logLevel.Equals(level, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                // Extract identity and message from content
-                string identity;
-                string message;
-                int? instancePort = null;
-
-                // Check if the message starts with a known bot name pattern (e.g., "Oddish-240322" or "Tia-505008")
-                var botMatch = BotNameRegex().Match(content);
-                if (botMatch.Success)
-                {
-                    identity = botMatch.Groups[1].Value;
-                    message = botMatch.Groups[2].Value;
-                }
-                else
-                {
-                    // Check for instance-specific logs with port info (e.g., "[Port:8082] Message")
-                    var portMatch = PortRegex().Match(content);
-                    if (portMatch.Success)
-                    {
-                        instancePort = int.Parse(portMatch.Groups[1].Value);
-                        message = portMatch.Groups[2].Value;
-                        identity = $"Instance-{instancePort}";
-                    }
-                    else
-                    {
-                        // Otherwise, check for service names (e.g., "BotTaskService", "TradeQueueInfo")
-                        var serviceMatch = ServiceRegex().Match(content);
-                        if (serviceMatch.Success)
-                        {
-                            identity = serviceMatch.Groups[1].Value;
-                            message = serviceMatch.Groups[2].Value;
-                        }
-                        else
-                        {
-                            // If no pattern matches, use the logger name as identity
-                            identity = logger.Split('.').Last();
-                            message = content;
-                        }
-                    }
-                }
-
-                // Filter by source/identity if specified
-                if (!string.IsNullOrEmpty(source) && !identity.Contains(source, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                // No need for port filtering - each instance has its own log file
-
-                // Filter by search if specified
-                if (!string.IsNullOrEmpty(search) && !message.Contains(search, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                parsedLogs.Add((timestamp, logLevel, identity, message, instancePort ?? _tcpPort));
-            }
-
-            // Take only the last 500 logs (newest)
-            var recentLogs = parsedLogs.TakeLast(500);
-
-            // Convert to the final format
-            foreach (var (logTimestamp, logLevel, logIdentity, logMessage, logPort) in recentLogs)
-            {
-                logs.Add(new
-                {
-                    timestamp = logTimestamp,
-                    level = logLevel,
-                    identity = logIdentity,
-                    message = logMessage,
-                    port = logPort
-                });
-            }
-
-            return (200, JsonSerializer.Serialize(new { logs }), "application/json");
-        }
-        catch (Exception ex)
-        {
-            LogUtil.LogError($"Failed to read logs: {ex.Message}", "WebServer");
-            return (500, CreateErrorResponse("Failed to read logs"), "application/json");
-        }
-    }
-
-    private async Task<BotInstance?> GetInstanceInfoAsync(int port)
-    {
-        if (port == _tcpPort)
-        {
-            return CreateLocalInstance();
-        }
-
-        var remoteInstances = await ScanRemoteInstancesAsync();
-        return remoteInstances.FirstOrDefault(i => i.Port == port);
-    }
-
-    private static async Task<List<string>> ReadAllLinesAsync(string filePath)
-    {
-        var lines = new List<string>();
-
-        // Read the entire file
-        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-
-        // Use Unicode encoding (UTF-16) to match LogUtil configuration
-        // Detect and handle BOM automatically
-        using var reader = new StreamReader(fs, Encoding.Unicode, detectEncodingFromByteOrderMarks: true);
-
-        string? line;
-        while ((line = await reader.ReadLineAsync()) != null)
-        {
-            lines.Add(line);
-        }
-
-        return lines;
-    }
-
-    private static async Task<List<string>> ReadLastLinesAsync(string filePath, int lineCount)
-    {
-        var lines = new List<string>();
-
-        // Read the entire file to ensure we get all content including new logs
-        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-
-        // Use Unicode encoding (UTF-16) to match LogUtil configuration
-        // Detect and handle BOM automatically
-        using var reader = new StreamReader(fs, Encoding.Unicode, detectEncodingFromByteOrderMarks: true);
-
-        string? line;
-        while ((line = await reader.ReadLineAsync()) != null)
-        {
-            lines.Add(line);
-            // Keep only the last N*2 lines in memory to avoid excessive memory usage
-            if (lines.Count > lineCount * 2)
-                lines.RemoveAt(0);
-        }
-
-        // Return only the last N lines
-        return lines.Count > lineCount ? lines.GetRange(lines.Count - lineCount, lineCount) : lines;
-    }
 
     private bool IsMasterInstance()
     {
