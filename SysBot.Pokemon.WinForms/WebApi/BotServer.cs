@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Drawing;
 using PKHeX.Core;
+using PKHeX.Core.AutoMod;
 using SysBot.Base;
 using SysBot.Pokemon.Discord;
 using SysBot.Pokemon.Helpers;
@@ -417,6 +418,14 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         content = "Iron Thorns @ Black Glasses\nAbility: Quark Drive\nLevel: 52\nShiny: Yes\nTera Type: Stellar\nEVs: 252 SpA / 252 SpD\nHardy Nature\n- Body Slam\n- Swords Dance\n- Ice Punch\n- Charge Beam\nBall: Dusk Ball\nShiny: Yes";
         content = ReusableActions.StripCodeBlock(content);
 
+        bool isEgg = ForGame(runner,
+            () => TradeExtensions<PK9>.IsEggCheck(content),
+            () => TradeExtensions<PK8>.IsEggCheck(content),
+            () => TradeExtensions<PB8>.IsEggCheck(content),
+            () => TradeExtensions<PA8>.IsEggCheck(content),
+            () => TradeExtensions<PB7>.IsEggCheck(content)
+        );
+
         if (!ShowdownParsing.TryParseAnyLanguage(content, out ShowdownSet? set) || set == null || set.Species == 0)
         {
             return JsonSerializer.Serialize(new
@@ -463,7 +472,20 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             () => LanguageHelper.GetTrainerInfoWithLanguage<PB7>((LanguageID)finalLanguage)
         );
 
-        var pkm = sav.GetLegal(template, out var result);
+        PKM pkm;
+        string result;
+
+        if (isEgg)
+        {
+            // Use ALM's GenerateEgg method for eggs
+            pkm = sav.GenerateEgg(template, out var eggResult);
+            result = eggResult.ToString();
+        }
+        else
+        {
+            // Use normal generation for non-eggs
+            pkm = sav.GetLegal(template, out result);
+        }
 
         if (pkm == null)
         {
@@ -477,45 +499,23 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         var la = new LegalityAnalysis(pkm);
         var spec = GameInfo.Strings.Species[template.Species];
 
-        bool isEgg = ForGame(runner,
-            () => TradeExtensions<PK9>.IsEggCheck(content),
-            () => TradeExtensions<PK8>.IsEggCheck(content),
-            () => TradeExtensions<PB8>.IsEggCheck(content),
-            () => TradeExtensions<PA8>.IsEggCheck(content),
-            () => TradeExtensions<PB7>.IsEggCheck(content)
-        );
-
-        if (isEgg && pkm is PKM eggPk)
+        // Apply standard item logic only for non-eggs
+        if (!isEgg)
         {
-            bool versionSpecified = content.Contains(".Version=", StringComparison.OrdinalIgnoreCase);
-
-            if (!versionSpecified)
-            {
-                if (eggPk is PB8 pb8)
-                    pb8.Version = GameVersion.BD;
-                else if (eggPk is PK8 pk8)
-                    pk8.Version = GameVersion.SW;
-            }
-            eggPk.IsNicknamed = false;
-
-            ForGame(runner,
-                () => TradeExtensions<PK9>.EggTrade(eggPk, AutoLegalityWrapper.GetTemplate(new ShowdownSet(content))),
-                () => TradeExtensions<PK8>.EggTrade(eggPk, AutoLegalityWrapper.GetTemplate(new ShowdownSet(content))),
-                () => TradeExtensions<PB8>.EggTrade(eggPk, AutoLegalityWrapper.GetTemplate(new ShowdownSet(content))),
-                () => TradeExtensions<PA8>.EggTrade(eggPk, AutoLegalityWrapper.GetTemplate(new ShowdownSet(content))),
-                () => TradeExtensions<PB7>.EggTrade(eggPk, AutoLegalityWrapper.GetTemplate(new ShowdownSet(content)))
-                );
-            pkm = eggPk;
-            la = new LegalityAnalysis(pkm);
+            ApplyStandardItemLogic(pkm);
         }
-        else
+
+        // Generate LGPE code if needed
+        if (pkm is PB7)
         {
-            pkm.HeldItem = pkm switch
+            if (pkm.Species == (int)Species.Mew && pkm.IsShiny)
             {
-                PA8 => (int)TradeSettings.TradeSettingsCategory.HeldItem.None,
-                _ when pkm.HeldItem == 0 && !pkm.IsEgg => (int)TradeSettings.TradeSettingsCategory.HeldItem.None,
-                _ => pkm.HeldItem
-            };
+                return JsonSerializer.Serialize(new
+                {
+                    success = false,
+                    info = "Mew can **not** be Shiny in LGPE. PoGo Mew does not transfer and Pokeball Plus Mew is shiny locked.",
+                }, JsonOptions);
+            }
         }
 
         if (!la.Valid)
@@ -642,6 +642,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         var trainer = new PokeTradeTrainerInfo(userName, userId);
         int uniqueTradeID = GenerateUniqueTradeID();
         var significance = RequestSignificance.None;
+        var added = QueueResultAdd.AlreadyInQueue;
 
         if (pkm is PK9 pk9 && runner is PokeBotRunner<PK9> runnerPk9)
         {
@@ -650,7 +651,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 lgcode, 1, 1, false, uniqueTradeID, false, false);
             var trade = new TradeEntry<PK9>(detail, userId, PokeRoutineType.LinkTrade, userName, uniqueTradeID);
 
-            var added = runnerPk9.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
+            added = runnerPk9.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
                 significance == RequestSignificance.Owner);
         } else if (pkm is PK8 pk8 && runner is PokeBotRunner<PK8> runnerPk8)
         {
@@ -659,7 +660,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 lgcode, 1, 1, false, uniqueTradeID, false, false);
             var trade = new TradeEntry<PK8>(detail, userId, PokeRoutineType.LinkTrade, userName, uniqueTradeID);
 
-            var added = runnerPk8.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
+            added = runnerPk8.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
                 significance == RequestSignificance.Owner);
         } else if (pkm is PB8 pb8 && runner is PokeBotRunner<PB8> runnerPb8)
         {
@@ -668,7 +669,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 lgcode, 1, 1, false, uniqueTradeID, false, false);
             var trade = new TradeEntry<PB8>(detail, userId, PokeRoutineType.LinkTrade, userName, uniqueTradeID);
 
-            var added = runnerPb8.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
+            added = runnerPb8.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
                 significance == RequestSignificance.Owner);
         } else if (pkm is PA8 pa8 && runner is PokeBotRunner<PA8> runnerPa8)
         {
@@ -677,7 +678,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 lgcode, 1, 1, false, uniqueTradeID, false, false);
             var trade = new TradeEntry<PA8>(detail, userId, PokeRoutineType.LinkTrade, userName, uniqueTradeID);
 
-            var added = runnerPa8.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
+            added = runnerPa8.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
                 significance == RequestSignificance.Owner);
         }
         else if (pkm is PB7 pb7 && runner is PokeBotRunner<PB7> runnerPb7)
@@ -687,7 +688,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 lgcode, 1, 1, false, uniqueTradeID, false, false);
             var trade = new TradeEntry<PB7>(detail, userId, PokeRoutineType.LinkTrade, userName, uniqueTradeID);
 
-            var added = runnerPb7.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
+            added = runnerPb7.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
                 significance == RequestSignificance.Owner);
         }
         else
@@ -695,12 +696,38 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             throw new Exception("Unknown trade type");
         }
 
+        if (added == QueueResultAdd.AlreadyInQueue)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                info = "您已经在等待队列中了,请先完成交换",
+            }, JsonOptions);
+        }
+
 
         return JsonSerializer.Serialize(new
         {
             success = true,
-            info = code,
+            info = new
+            {
+                uniqueTradeID = uniqueTradeID,
+                userId = userId,
+                userName = userName,
+                tradeCode = code,
+                pkmSpecies = spec,
+            },
         }, JsonOptions);
+    }
+
+    public static void ApplyStandardItemLogic(PKM pkm)
+    {
+        pkm.HeldItem = pkm switch
+        {
+            PA8 => (int)TradeSettings.TradeSettingsCategory.HeldItem.None,
+            _ when pkm.HeldItem == 0 && !pkm.IsEgg => (int)TradeSettings.TradeSettingsCategory.HeldItem.None,
+            _ => pkm.HeldItem
+        };
     }
 
     private static int GenerateUniqueTradeID()
