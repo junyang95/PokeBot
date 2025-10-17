@@ -12,7 +12,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Drawing;
+using PKHeX.Core;
 using SysBot.Base;
+using SysBot.Pokemon.Discord;
+using SysBot.Pokemon.Helpers;
 using SysBot.Pokemon.WinForms.WebApi.Models;
 using static SysBot.Pokemon.WinForms.WebApi.RestartManager;
 
@@ -28,13 +31,13 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
     private readonly Main _mainForm = mainForm ?? throw new ArgumentNullException(nameof(mainForm));
     private volatile bool _running;
     private string? _htmlTemplate;
-    
+
     // Whitelist of allowed method names for security
     private static readonly HashSet<string> AllowedMethods = new(StringComparer.OrdinalIgnoreCase)
     {
         "SendAll"
     };
-    
+
     // JSON serialization options
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -42,7 +45,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         WriteIndented = false,
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
-    
+
     // Cached JsonSerializer options for security contexts
     private static class CachedJsonOptions
     {
@@ -53,11 +56,12 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
         };
     }
-    
-    
+
+
+
     [System.Text.RegularExpressions.GeneratedRegex(@"[<>""'&;\/]")]
     private static partial System.Text.RegularExpressions.Regex CleanupRegex();
-    
+
     private string HtmlTemplate
     {
         get
@@ -82,7 +86,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }
-    
+
     private static byte[] LoadEmbeddedResourceBinary(string resourceName)
     {
         var assembly = Assembly.GetExecutingAssembly();
@@ -135,7 +139,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 Name = "BotWebServer"
             };
             _listenerThread.Start();
-            
+
         }
         catch (Exception ex)
         {
@@ -152,8 +156,8 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         {
             _running = false;
             _cts.Cancel();
-            
-            
+
+
             _listener?.Stop();
             _listenerThread?.Join(5000);
         }
@@ -226,7 +230,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
 
 
             var (statusCode, content, contentType) = await ProcessRequestAsync(request);
-            
+
             if ((contentType == "image/x-icon" || contentType == "image/png") && content is byte[] imageBytes)
             {
                 await SendBinaryResponseAsync(response, 200, imageBytes, contentType);
@@ -247,7 +251,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             await TrySendErrorResponseAsync(response, 500, "Internal Server Error");
         }
     }
-    
+
     private static void SetCorsHeaders(HttpListenerRequest request, HttpListenerResponse response)
     {
         var origin = request.Headers["Origin"] ?? "http://localhost";
@@ -261,7 +265,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
     private async Task<(int statusCode, object? content, string contentType)> ProcessRequestAsync(HttpListenerRequest request)
     {
         var path = request.Url?.LocalPath ?? "";
-        
+
         return path switch
         {
             "/" => (200, HtmlTemplate, "text/html"),
@@ -289,10 +293,471 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             "/icon.ico" => (200, GetIconBytes(), "image/x-icon"),
             "/LeftJoyCon.png" => (200, LoadEmbeddedResourceBinary("LeftJoyCon.png"), "image/png"),
             "/RightJoyCon.png" => (200, LoadEmbeddedResourceBinary("RightJoyCon.png"), "image/png"),
+            "/api/trade/code" => (200, await GenerateTradeCode(request), "application/json"),
             _ => (404, null, "text/plain")
         };
     }
-    
+
+    // 放在同一个类里或单独的 static helper 类里
+    private static TResult WithInfo<TResult>(
+        IPokeBotRunner runner,
+        Func<TradeQueueInfo<PK9>, TResult> sv,
+        Func<TradeQueueInfo<PK8>, TResult> swsh,
+        Func<TradeQueueInfo<PB8>, TResult> bdsp,
+        Func<TradeQueueInfo<PA8>, TResult> la,
+        Func<TradeQueueInfo<PB7>, TResult> lgpe)
+    {
+        return runner switch
+        {
+            PokeBotRunner<PK9> r => sv(r.Hub.Queues.Info),
+            PokeBotRunner<PK8> r => swsh(r.Hub.Queues.Info),
+            PokeBotRunner<PB8> r => bdsp(r.Hub.Queues.Info),
+            PokeBotRunner<PA8> r => la(r.Hub.Queues.Info),
+            PokeBotRunner<PB7> r => lgpe(r.Hub.Queues.Info),
+            _ => throw new NotSupportedException($"Unsupported runner type: {runner?.GetType().Name}")
+        };
+    }
+
+    private static TResult WithHub<TResult>(
+        IPokeBotRunner runner,
+        Func< PokeTradeHub<PK9>, TResult> sv,
+        Func< PokeTradeHub<PK8>, TResult> swsh,
+        Func< PokeTradeHub<PB8>, TResult> bdsp,
+        Func< PokeTradeHub<PA8>, TResult> la,
+        Func< PokeTradeHub<PB7>, TResult> lgpe)
+    {
+        return runner switch
+        {
+            PokeBotRunner<PK9> r => sv(r.Hub),
+            PokeBotRunner<PK8> r => swsh(r.Hub),
+            PokeBotRunner<PB8> r => bdsp(r.Hub),
+            PokeBotRunner<PA8> r => la(r.Hub),
+            PokeBotRunner<PB7> r => lgpe(r.Hub),
+            _ => throw new NotSupportedException($"Unsupported runner type: {runner?.GetType().Name}")
+        };
+    }
+
+    private static TResult ForGame<TResult>(
+        IPokeBotRunner runner,
+        Func<TResult> sv,   // PK9
+        Func<TResult> swsh, // PK8
+        Func<TResult> bdsp, // PB8
+        Func<TResult> la,   // PA8
+        Func<TResult> lgpe) // PB7
+    {
+        return runner switch
+        {
+            PokeBotRunner<PK9> => sv(),
+            PokeBotRunner<PK8> => swsh(),
+            PokeBotRunner<PB8> => bdsp(),
+            PokeBotRunner<PA8> => la(),
+            PokeBotRunner<PB7> => lgpe(),
+            _ => throw new NotSupportedException($"Unsupported runner: {runner?.GetType().Name}")
+        };
+    }
+
+    private static T ForGame<T>(
+        IPokeBotRunner runner,
+        T sv,   // PK9
+        T swsh, // PK8
+        T bdsp, // PB8
+        T la,   // PA8
+        T lgpe) // PB7
+    {
+        return runner switch
+        {
+            PokeBotRunner<PK9> => sv,
+            PokeBotRunner<PK8> => swsh,
+            PokeBotRunner<PB8> => bdsp,
+            PokeBotRunner<PA8> => la,
+            PokeBotRunner<PB7> => lgpe,
+            _ => throw new NotSupportedException($"Unsupported runner: {runner?.GetType().Name}")
+        };
+    }
+
+    private IPokeBotRunner RequireRunner()
+        => mainForm.Runner ?? throw new InvalidOperationException("Runner not ready.");
+
+    private ProgramConfig LoadConfig() => mainForm.Config ?? throw new InvalidOperationException("Config not ready.");
+    private async Task<object?> GenerateTradeCode(HttpListenerRequest request)
+    {
+        var runner = RequireRunner();
+
+        var userIDRaw = request.QueryString["userID"];
+        userIDRaw = "1000";
+        if (!ulong.TryParse(userIDRaw, out var userId))
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                info = "没有登录，请先登录",
+            }, JsonOptions);
+        }
+
+        bool isQueued = WithInfo(
+            runner,
+            sv   => sv.IsUserInQueue(userId),
+            swsh => swsh.IsUserInQueue(userId),
+            bdsp => bdsp.IsUserInQueue(userId),
+            la   => la.IsUserInQueue(userId),
+            lgpe => lgpe.IsUserInQueue(userId)
+        );
+
+        if (isQueued)
+        {
+
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                info = "您已经在等待队列中了,请先完成交换",
+            }, JsonOptions);
+        }
+
+        var content = request.QueryString["content"];
+        content = "Iron Thorns @ Black Glasses\nAbility: Quark Drive\nLevel: 52\nShiny: Yes\nTera Type: Stellar\nEVs: 252 SpA / 252 SpD\nHardy Nature\n- Body Slam\n- Swords Dance\n- Ice Punch\n- Charge Beam\nBall: Dusk Ball\nShiny: Yes";
+        content = ReusableActions.StripCodeBlock(content);
+
+        if (!ShowdownParsing.TryParseAnyLanguage(content, out ShowdownSet? set) || set == null || set.Species == 0)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                info = "Showndown set不合法，请重新调整",
+            }, JsonOptions);
+        }
+
+        byte finalLanguage = LanguageHelper.GetFinalLanguage(
+            content, set,
+            (byte)WithHub(runner,
+                svHub => svHub.Config.Legality.GenerateLanguage,
+                swshHub => swshHub.Config.Legality.GenerateLanguage,
+                bdspHub => bdspHub.Config.Legality.GenerateLanguage,
+                laHub => laHub.Config.Legality.GenerateLanguage,
+                lgpeHub => lgpeHub.Config.Legality.GenerateLanguage
+                ),
+            ForGame(runner,
+                TradeExtensions<PK9>.DetectShowdownLanguage,
+                TradeExtensions<PK8>.DetectShowdownLanguage,
+                TradeExtensions<PB8>.DetectShowdownLanguage,
+                 TradeExtensions<PA8>.DetectShowdownLanguage,
+                TradeExtensions<PB7>.DetectShowdownLanguage
+                )
+        );
+
+        var template = AutoLegalityWrapper.GetTemplate(set);
+
+        if (set.InvalidLines.Count != 0)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                info = "Showndown set不合法，请重新调整",
+            }, JsonOptions);
+        }
+
+        var sav = ForGame(runner,
+            () => LanguageHelper.GetTrainerInfoWithLanguage<PK9>((LanguageID)finalLanguage),
+            () => LanguageHelper.GetTrainerInfoWithLanguage<PK8>((LanguageID)finalLanguage),
+            () => LanguageHelper.GetTrainerInfoWithLanguage<PB8>((LanguageID)finalLanguage),
+            () => LanguageHelper.GetTrainerInfoWithLanguage<PA8>((LanguageID)finalLanguage),
+            () => LanguageHelper.GetTrainerInfoWithLanguage<PB7>((LanguageID)finalLanguage)
+        );
+
+        var pkm = sav.GetLegal(template, out var result);
+
+        if (pkm == null)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                info = "Showndown set生成时间过长,请重新调整",
+            }, JsonOptions);
+        }
+
+        var la = new LegalityAnalysis(pkm);
+        var spec = GameInfo.Strings.Species[template.Species];
+
+        bool isEgg = ForGame(runner,
+            () => TradeExtensions<PK9>.IsEggCheck(content),
+            () => TradeExtensions<PK8>.IsEggCheck(content),
+            () => TradeExtensions<PB8>.IsEggCheck(content),
+            () => TradeExtensions<PA8>.IsEggCheck(content),
+            () => TradeExtensions<PB7>.IsEggCheck(content)
+        );
+
+        if (isEgg && pkm is PKM eggPk)
+        {
+            bool versionSpecified = content.Contains(".Version=", StringComparison.OrdinalIgnoreCase);
+
+            if (!versionSpecified)
+            {
+                if (eggPk is PB8 pb8)
+                    pb8.Version = GameVersion.BD;
+                else if (eggPk is PK8 pk8)
+                    pk8.Version = GameVersion.SW;
+            }
+            eggPk.IsNicknamed = false;
+
+            ForGame(runner,
+                () => TradeExtensions<PK9>.EggTrade(eggPk, AutoLegalityWrapper.GetTemplate(new ShowdownSet(content))),
+                () => TradeExtensions<PK8>.EggTrade(eggPk, AutoLegalityWrapper.GetTemplate(new ShowdownSet(content))),
+                () => TradeExtensions<PB8>.EggTrade(eggPk, AutoLegalityWrapper.GetTemplate(new ShowdownSet(content))),
+                () => TradeExtensions<PA8>.EggTrade(eggPk, AutoLegalityWrapper.GetTemplate(new ShowdownSet(content))),
+                () => TradeExtensions<PB7>.EggTrade(eggPk, AutoLegalityWrapper.GetTemplate(new ShowdownSet(content)))
+                );
+            pkm = eggPk;
+            la = new LegalityAnalysis(pkm);
+        }
+        else
+        {
+            pkm.HeldItem = pkm switch
+            {
+                PA8 => (int)TradeSettings.TradeSettingsCategory.HeldItem.None,
+                _ when pkm.HeldItem == 0 && !pkm.IsEgg => (int)TradeSettings.TradeSettingsCategory.HeldItem.None,
+                _ => pkm.HeldItem
+            };
+        }
+
+        if (!la.Valid)
+        {
+            var reason = GetFailureReason(result, spec);
+            var hint = result == "Failed" ? GetLegalizationHint(template, sav, pkm, spec) : null;
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                info = $"{reason} - {hint}",
+            }, JsonOptions);
+        }
+
+        // Final preparation
+        PrepareForTrade(pkm, set, finalLanguage);
+
+        var isNonNative = la.EncounterOriginal.Context != pkm.Context || pkm.GO;
+
+        if (pkm == null)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                info = "Showndown set生成有问题",
+            }, JsonOptions);
+        }
+
+        List<Pictocodes> lgcode = GenerateRandomPictocodes(3);
+
+
+        if (pkm is not null && !pkm.CanBeTraded())
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                info = "交易模块拒绝了你的请求",
+            }, JsonOptions);
+        }
+
+        la = new LegalityAnalysis(pkm!);
+
+        if (!la.Valid)
+        {
+            string responseMessage;
+            if (pkm?.IsEgg == true)
+            {
+                string speciesName = SpeciesName.GetSpeciesName(pkm.Species, (int)LanguageID.English);
+                responseMessage = $"Invalid Showdown Set for the {speciesName} egg. Please review your information and try again.\n\nLegality Report:\n```\n{la.Report()}\n```";
+            }
+            else
+            {
+                string speciesName = SpeciesName.GetSpeciesName(pkm!.Species, (int)LanguageID.English);
+                responseMessage = $"{speciesName} attachment is not legal, and cannot be traded!\n\nLegality Report:\n```\n{la.Report()}\n```";
+            }
+
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                info = responseMessage,
+            }, JsonOptions);
+        }
+
+        var disallowNonNatives = WithHub(runner,
+            svHub => svHub.Config.Legality.DisallowNonNatives,
+            swshHub => swshHub.Config.Legality.DisallowNonNatives,
+            bdspHub => bdspHub.Config.Legality.DisallowNonNatives,
+            laHub => laHub.Config.Legality.DisallowNonNatives,
+            lgpeHub => lgpeHub.Config.Legality.DisallowNonNatives
+        );
+
+        if (disallowNonNatives && isNonNative)
+        {
+            string speciesName = SpeciesName.GetSpeciesName(pkm!.Species, (int)LanguageID.ChineseS);
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                info = $"This **{speciesName}** is not native to this game, and cannot be traded! Trade with the correct bot, then trade to HOME.",
+            }, JsonOptions);
+        }
+
+        var disallowTracked = WithHub(runner,
+            svHub => svHub.Config.Legality.DisallowTracked,
+            swshHub => swshHub.Config.Legality.DisallowTracked,
+            bdspHub => bdspHub.Config.Legality.DisallowTracked,
+            laHub => laHub.Config.Legality.DisallowTracked,
+            lgpeHub => lgpeHub.Config.Legality.DisallowTracked
+        );
+
+        if (disallowTracked && pkm is IHomeTrack { HasTracker: true })
+        {
+            string speciesName = SpeciesName.GetSpeciesName(pkm!.Species, (int)LanguageID.ChineseS);
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                info = $"This {speciesName} file is tracked by HOME, and cannot be traded!",
+            }, JsonOptions);
+        }
+
+        if (!la.Valid && la.Results.Any(m => m.Identifier is CheckIdentifier.Memory))
+        {
+            var clone = pkm!.Clone();
+            clone.HandlingTrainerName = pkm.OriginalTrainerName;
+            clone.HandlingTrainerGender = pkm.OriginalTrainerGender;
+            if (clone is PK8 or PA8 or PB8 or PK9)
+                ((dynamic)clone).HandlingTrainerLanguage = (byte)pkm.Language;
+            clone.CurrentHandler = 1;
+            la = new LegalityAnalysis(clone);
+            if (la.Valid) pkm = clone;
+        }
+
+
+        int code = runner.Config.Trade.GetRandomTradeCode();
+        if ((uint)code > 9999_9999)
+        {
+            return JsonSerializer.Serialize(new
+            {
+                success = false,
+                info = "Trade code should be 00000000-99999999!",
+            }, JsonOptions);
+        }
+
+
+        var userName = "人生赢家";
+        var trainer = new PokeTradeTrainerInfo(userName, userId);
+        int uniqueTradeID = GenerateUniqueTradeID();
+        var significance = RequestSignificance.None;
+
+        if (pkm is PK9 pk9 && runner is PokeBotRunner<PK9> runnerPk9)
+        {
+            var notifier = new PokeTradeLogNotifier<PK9>();
+            var detail = new PokeTradeDetail<PK9>(pk9, trainer, notifier, PokeTradeType.Specific, code, significance == RequestSignificance.Favored,
+                lgcode, 1, 1, false, uniqueTradeID, false, false);
+            var trade = new TradeEntry<PK9>(detail, userId, PokeRoutineType.LinkTrade, userName, uniqueTradeID);
+
+            var added = runnerPk9.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
+                significance == RequestSignificance.Owner);
+        } else if (pkm is PK8 pk8 && runner is PokeBotRunner<PK8> runnerPk8)
+        {
+            var notifier = new PokeTradeLogNotifier<PK8>();
+            var detail = new PokeTradeDetail<PK8>(pk8, trainer, notifier, PokeTradeType.Specific, code, significance == RequestSignificance.Favored,
+                lgcode, 1, 1, false, uniqueTradeID, false, false);
+            var trade = new TradeEntry<PK8>(detail, userId, PokeRoutineType.LinkTrade, userName, uniqueTradeID);
+
+            var added = runnerPk8.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
+                significance == RequestSignificance.Owner);
+        } else if (pkm is PB8 pb8 && runner is PokeBotRunner<PB8> runnerPb8)
+        {
+            var notifier = new PokeTradeLogNotifier<PB8>();
+            var detail = new PokeTradeDetail<PB8>(pb8, trainer, notifier, PokeTradeType.Specific, code, significance == RequestSignificance.Favored,
+                lgcode, 1, 1, false, uniqueTradeID, false, false);
+            var trade = new TradeEntry<PB8>(detail, userId, PokeRoutineType.LinkTrade, userName, uniqueTradeID);
+
+            var added = runnerPb8.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
+                significance == RequestSignificance.Owner);
+        } else if (pkm is PA8 pa8 && runner is PokeBotRunner<PA8> runnerPa8)
+        {
+            var notifier = new PokeTradeLogNotifier<PA8>();
+            var detail = new PokeTradeDetail<PA8>(pa8, trainer, notifier, PokeTradeType.Specific, code, significance == RequestSignificance.Favored,
+                lgcode, 1, 1, false, uniqueTradeID, false, false);
+            var trade = new TradeEntry<PA8>(detail, userId, PokeRoutineType.LinkTrade, userName, uniqueTradeID);
+
+            var added = runnerPa8.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
+                significance == RequestSignificance.Owner);
+        }
+        else if (pkm is PB7 pb7 && runner is PokeBotRunner<PB7> runnerPb7)
+        {
+            var notifier = new PokeTradeLogNotifier<PB7>();
+            var detail = new PokeTradeDetail<PB7>(pb7, trainer, notifier, PokeTradeType.Specific, code, significance == RequestSignificance.Favored,
+                lgcode, 1, 1, false, uniqueTradeID, false, false);
+            var trade = new TradeEntry<PB7>(detail, userId, PokeRoutineType.LinkTrade, userName, uniqueTradeID);
+
+            var added = runnerPb7.Hub.Queues.Info.AddToTradeQueue(trade, userId, false,
+                significance == RequestSignificance.Owner);
+        }
+        else
+        {
+            throw new Exception("Unknown trade type");
+        }
+
+
+        return JsonSerializer.Serialize(new
+        {
+            success = true,
+            info = code,
+        }, JsonOptions);
+    }
+
+    private static int GenerateUniqueTradeID()
+    {
+        long timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        int randomValue = Random.Shared.Next(1000);
+        return (int)((timestamp % int.MaxValue) * 1000 + randomValue);
+    }
+
+    public static List<Pictocodes> GenerateRandomPictocodes(int count)
+    {
+        Random rnd = new();
+        List<Pictocodes> randomPictocodes = [];
+        Array pictocodeValues = Enum.GetValues<Pictocodes>();
+
+        for (int i = 0; i < count; i++)
+        {
+            Pictocodes randomPictocode = (Pictocodes)pictocodeValues.GetValue(rnd.Next(pictocodeValues.Length))!;
+            randomPictocodes.Add(randomPictocode);
+        }
+
+        return randomPictocodes;
+    }
+
+    public static void PrepareForTrade(PKM pk, ShowdownSet set, byte finalLanguage)
+    {
+        if (pk.WasEgg)
+            pk.EggMetDate = pk.MetDate;
+
+        pk.Language = finalLanguage;
+
+        if (!set.Nickname.Equals(pk.Nickname) && string.IsNullOrEmpty(set.Nickname))
+            pk.ClearNickname();
+
+        pk.ResetPartyStats();
+    }
+
+    public static string GetLegalizationHint(IBattleTemplate template, ITrainerInfo sav, PKM pkm, string speciesName)
+    {
+        var hint = AutoLegalityWrapper.GetLegalizationHint(template, sav, pkm);
+        if (hint.Contains("Requested shiny value (ShinyType."))
+        {
+            hint = $"{speciesName} **cannot** be shiny. Please try again.";
+        }
+        return hint;
+    }
+
+    public static string GetFailureReason(string result, string speciesName)
+    {
+        return result switch
+        {
+            "Timeout" => $"That {speciesName} set took too long to generate.",
+            "VersionMismatch" => "Request refused: PKHeX and Auto-Legality Mod version mismatch.",
+            _ => $"I wasn't able to create a {speciesName} from that set."
+        };
+    }
+
     private static async Task SendResponseAsync(HttpListenerResponse response, int statusCode, string content, string contentType = "text/plain")
     {
         try
@@ -300,10 +765,10 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             response.StatusCode = statusCode;
             response.ContentType = contentType;
             response.Headers.Add("Cache-Control", "no-cache");
-            
+
             var buffer = Encoding.UTF8.GetBytes(content ?? "");
             response.ContentLength64 = buffer.Length;
-            
+
             await response.OutputStream.WriteAsync(buffer.AsMemory(0, buffer.Length));
             await response.OutputStream.FlushAsync();
             response.Close();
@@ -321,7 +786,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             try { response.Close(); } catch { }
         }
     }
-    
+
     private static async Task SendBinaryResponseAsync(HttpListenerResponse response, int statusCode, byte[] content, string contentType)
     {
         try
@@ -329,7 +794,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             response.StatusCode = statusCode;
             response.ContentType = contentType;
             response.ContentLength64 = content.Length;
-            
+
             await response.OutputStream.WriteAsync(content.AsMemory(0, content.Length));
             await response.OutputStream.FlushAsync();
         }
@@ -346,7 +811,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             try { response.Close(); } catch { }
         }
     }
-    
+
     private static async Task TrySendErrorResponseAsync(HttpListenerResponse response, int statusCode, string message)
     {
         try
@@ -373,7 +838,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 try
                 {
                     var requestData = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(body);
-                    
+
                     // Check for force flag
                     if (requestData?.ContainsKey("force") == true)
                     {
@@ -391,7 +856,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             {
                 return CreateErrorResponse("An update is already in progress");
             }
-            
+
             if (RestartManager.IsRestartInProgress)
             {
                 return CreateErrorResponse("Cannot update while restart is in progress");
@@ -450,7 +915,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             // Check if instance exists and is online
             var instances = await ScanRemoteInstancesAsync();
             var targetInstance = instances.FirstOrDefault(i => i.Port == port);
-            
+
             if (targetInstance == null)
             {
                 LogUtil.LogError($"Instance with port {port} not found", "WebServer");
@@ -467,12 +932,12 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             if (UpdateManager.IsUpdateInProgress())
             {
                 var currentState = UpdateManager.GetCurrentState();
-                
+
                 // Check if this specific instance is already being updated
                 if (currentState?.Instances?.Any(i => i.TcpPort == port) == true)
                 {
                     var instanceState = currentState.Instances.First(i => i.TcpPort == port);
-                    
+
                     LogUtil.LogInfo($"Instance {port} is already updating. Status: {instanceState.Status}", "WebServer");
                     return JsonSerializer.Serialize(new
                     {
@@ -482,7 +947,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                         error = instanceState.Error
                     }, JsonOptions);
                 }
-                
+
                 // Another update is in progress but not for this instance
                 LogUtil.LogError($"Cannot update instance {port} - another update is in progress", "WebServer");
                 return CreateErrorResponse("Another update is already in progress. Please wait for it to complete or clear the session.");
@@ -501,7 +966,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             {
                 using var reader = new StreamReader(request.InputStream);
                 var body = await reader.ReadToEndAsync();
-                
+
                 var sanitizedJson = SanitizeJsonInput(body);
                 if (!string.IsNullOrEmpty(sanitizedJson))
                 {
@@ -534,7 +999,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             if (success)
             {
                 LogUtil.LogInfo($"Successfully updated instance on port {port}", "WebServer");
-                
+
                 return JsonSerializer.Serialize(new
                 {
                     success = true,
@@ -546,7 +1011,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             else
             {
                 LogUtil.LogError($"Failed to update instance on port {port}", "WebServer");
-                
+
                 return JsonSerializer.Serialize(new
                 {
                     success = false,
@@ -606,7 +1071,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             {
                 var config = RestartManager.GetScheduleConfig();
                 var nextRestart = RestartManager.NextScheduledRestart;
-                
+
                 var response = new
                 {
                     config.Enabled,
@@ -622,23 +1087,23 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             {
                 using var reader = new StreamReader(request.InputStream);
                 var body = await reader.ReadToEndAsync();
-                            
+
                 var config = JsonSerializer.Deserialize<RestartScheduleConfig>(body, JsonOptions);
                 if (config == null)
                 {
                     LogUtil.LogError("Failed to deserialize RestartScheduleConfig", "WebServer");
                     return CreateErrorResponse("Invalid schedule configuration");
                 }
-                
+
                 RestartManager.UpdateScheduleConfig(config);
-                
-                var result = new 
-                { 
-                    Success = true, 
+
+                var result = new
+                {
+                    Success = true,
                     Message = "Restart schedule updated successfully",
                     NextRestart = RestartManager.NextScheduledRestart?.ToString("yyyy-MM-dd HH:mm:ss")
                 };
-                
+
                 return JsonSerializer.Serialize(result);
             }
 
@@ -658,15 +1123,15 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         try
         {
             var instances = new List<InstanceIdleInfo>();
-            
+
             // Get local instance idle status
             var localInfo = GetLocalIdleInfo();
             instances.Add(localInfo);
-            
+
             // Get remote instances idle status
             var remoteInstances = (await ScanRemoteInstancesAsync()).Where(i => i.IsOnline);
             instances.AddRange(GetRemoteIdleInfo(remoteInstances));
-            
+
             var response = new IdleStatusResponse
             {
                 Instances = instances,
@@ -674,7 +1139,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 TotalIdleBots = instances.Sum(i => i.IdleBots),
                 AllBotsIdle = instances.All(i => i.AllIdle)
             };
-            
+
             return JsonSerializer.Serialize(response, JsonOptions);
         }
         catch (Exception ex)
@@ -682,19 +1147,19 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             return CreateErrorResponse(ex.Message);
         }
     }
-    
+
     private InstanceIdleInfo GetLocalIdleInfo()
     {
         var localBots = GetBotControllers();
         var config = GetConfig();
         var nonIdleBots = new List<NonIdleBot>();
         var idleCount = 0;
-        
+
         foreach (var controller in localBots)
         {
             var status = controller.ReadBotState();
             var upperStatus = status?.ToUpper() ?? "";
-            
+
             if (upperStatus == "IDLE" || upperStatus == "STOPPED")
             {
                 idleCount++;
@@ -708,7 +1173,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 });
             }
         }
-        
+
         return new InstanceIdleInfo
         {
             Port = _tcpPort,
@@ -719,11 +1184,11 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             AllIdle = idleCount == localBots.Count
         };
     }
-    
+
     private static List<InstanceIdleInfo> GetRemoteIdleInfo(IEnumerable<BotInstance> remoteInstances)
     {
         var instances = new List<InstanceIdleInfo>();
-        
+
         foreach (var instance in remoteInstances)
         {
             try
@@ -737,7 +1202,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                         var bots = botsData["Bots"];
                         var idleCount = 0;
                         var nonIdleBots = new List<NonIdleBot>();
-                        
+
                         foreach (var bot in bots)
                         {
                             if (bot.TryGetValue("Status", out var status))
@@ -757,7 +1222,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                                 }
                             }
                         }
-                        
+
                         instances.Add(new InstanceIdleInfo
                         {
                             Port = instance.Port,
@@ -772,7 +1237,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             }
             catch { }
         }
-        
+
         return instances;
     }
 
@@ -782,14 +1247,14 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         {
             var (updateAvailable, _, latestVersion) = await UpdateChecker.CheckForUpdatesAsync(false);
             var changelog = await UpdateChecker.FetchChangelogAsync();
-            
+
             var response = new UpdateCheckResponse
             {
                 Version = latestVersion ?? "Unknown",
                 Changelog = changelog,
                 Available = updateAvailable
             };
-            
+
             return JsonSerializer.Serialize(response, JsonOptions);
         }
         catch (Exception ex)
@@ -801,7 +1266,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 Available = false,
                 Error = ex.Message
             };
-            
+
             return JsonSerializer.Serialize(response, JsonOptions);
         }
     }
@@ -818,7 +1283,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 return 0;
 
             var portString = parts[4];
-            
+
             // Validate port string length to prevent overflow
             if (portString.Length > 10)
                 return 0;
@@ -1011,7 +1476,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                     var portText = File.ReadAllText(portFile).Trim();
                     if (portText.StartsWith("ERROR:"))
                         continue;
-                        
+
                     // Port file now only contains TCP port
                     var lines = portText.Split('\n', '\r').Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
                     if (lines.Length == 0 || !int.TryParse(lines[0], out var port))
@@ -1085,7 +1550,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             }
         }
         catch { }
-        
+
         return 0; // Process not found
     }
 
@@ -1095,7 +1560,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
     private static string? GetProcessPathForId(int processId)
     {
         if (processId == 0) return null;
-        
+
         try
         {
             using var process = Process.GetProcessById(processId);
@@ -1125,7 +1590,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
 
                 if (root.TryGetProperty("Name", out var name))
                     instance.Name = name.GetString() ?? "PokeBot";
-                    
+
                 if (root.TryGetProperty("ProcessPath", out var processPath))
                     instance.ProcessPath = processPath.GetString();
             }
@@ -1203,8 +1668,8 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         catch (Exception ex)
         {
             LogUtil.LogError($"Error in GetBots for port {port}: {ex.Message}", "WebAPI");
-            return JsonSerializer.Serialize(new BotsResponse 
-            { 
+            return JsonSerializer.Serialize(new BotsResponse
+            {
                 Bots = [],
                 Error = $"Error getting bots: {ex.Message}"
             }, JsonOptions);
@@ -1212,17 +1677,17 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
 
         // Query remote instance
         var result = QueryRemote(port, "LISTBOTS");
-        
+
         // Check if the result is an error
         if (result.StartsWith("ERROR"))
         {
-            return JsonSerializer.Serialize(new BotsResponse 
-            { 
+            return JsonSerializer.Serialize(new BotsResponse
+            {
                 Bots = [],
                 Error = result
             }, JsonOptions);
         }
-        
+
         // If it's already valid JSON, return it
         // Otherwise wrap it in a valid response
         try
@@ -1234,8 +1699,8 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         catch
         {
             // If not valid JSON, return empty bot list with error
-            return JsonSerializer.Serialize(new BotsResponse 
-            { 
+            return JsonSerializer.Serialize(new BotsResponse
+            {
                 Bots = [],
                 Error = "Invalid response from remote instance"
             }, JsonOptions);
@@ -1265,7 +1730,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 Command = commandRequest.Command,
                 Error = result.StartsWith("ERROR") ? result : null
             };
-            
+
             return JsonSerializer.Serialize(response, JsonOptions);
         }
         catch (Exception ex)
@@ -1283,14 +1748,14 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 return CreateErrorResponse("Invalid command request");
 
             var results = await ExecuteCommandOnAllInstancesAsync(commandRequest.Command);
-            
+
             var response = new BatchCommandResponse
             {
                 Results = results,
                 TotalInstances = results.Count,
                 SuccessfulCommands = results.Count(r => r.Success)
             };
-            
+
             return JsonSerializer.Serialize(response, JsonOptions);
         }
         catch (Exception ex)
@@ -1298,7 +1763,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             return CreateErrorResponse(ex.Message);
         }
     }
-    
+
     private async Task<List<CommandResponse>> ExecuteCommandOnAllInstancesAsync(string command)
     {
         var tasks = new List<Task<CommandResponse?>>
@@ -1314,7 +1779,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 return localResult;
             })
         };
-        
+
         // Execute remote commands
         var remoteInstances = (await ScanRemoteInstancesAsync()).Where(i => i.IsOnline);
         foreach (var instance in remoteInstances)
@@ -1346,7 +1811,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 }
             }));
         }
-        
+
         var results = await Task.WhenAll(tasks);
         return [.. results.Where(r => r != null).Cast<CommandResponse>()];
     }
@@ -1357,14 +1822,14 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         {
             var cmd = MapCommand(command);
             ExecuteMainFormCommand(cmd);
-            
+
             var response = new CommandResponse
             {
                 Message = $"Command {command} sent successfully",
                 Port = _tcpPort,
                 Command = command
             };
-            
+
             return JsonSerializer.Serialize(response, JsonOptions);
         }
         catch (Exception ex)
@@ -1377,11 +1842,11 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 Port = _tcpPort,
                 Command = command
             };
-            
+
             return JsonSerializer.Serialize(response, JsonOptions);
         }
     }
-    
+
     private void ExecuteMainFormCommand(BotControlCommand command)
     {
         _mainForm.BeginInvoke((System.Windows.Forms.MethodInvoker)(() =>
@@ -1450,13 +1915,13 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
 
             writer.WriteLine(sanitizedCommand);
             var response = reader.ReadLine();
-            
+
             // Limit response size to prevent DoS
             if (response != null && response.Length > 10000)
             {
                 response = string.Concat(response.AsSpan(0, 10000), "... [truncated]");
             }
-            
+
             return response ?? "ERROR: No response";
         }
         catch (Exception ex)
@@ -1496,15 +1961,15 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
     {
         return JsonSerializer.Serialize(ApiResponseFactory.CreateSimpleError(message), JsonOptions);
     }
-    
-    
+
+
     private bool IsMasterInstance()
     {
         // Master is the instance hosting the web server on the configured control panel port
         var configuredPort = _mainForm.Config?.Hub?.WebServer?.ControlPanelPort ?? 8080;
         return _port == configuredPort;
     }
-    
+
 
     private static bool IsAllowedOrigin(string origin)
     {
@@ -1541,7 +2006,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 // Check if master instance actually updated
                 var currentVersion = SysBot.Pokemon.Helpers.PokeBot.Version;
                 LogUtil.LogInfo($"Checking session state: current={currentVersion}, target={currentState.TargetVersion}, isComplete={currentState.IsComplete}", "WebServer");
-                
+
                 // If version matches target, force complete regardless of what the state says
                 if (currentVersion == currentState.TargetVersion)
                 {
@@ -1549,8 +2014,8 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                     {
                         LogUtil.LogInfo("Force completing update session - version matches target", "WebServer");
                         UpdateManager.ForceCompleteSession();
-                        return JsonSerializer.Serialize(new { 
-                            success = true, 
+                        return JsonSerializer.Serialize(new {
+                            success = true,
                             message = "Update completed successfully - all instances updated to target version",
                             action = "force_completed",
                             currentVersion,
@@ -1561,8 +2026,8 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                     {
                         // Already complete and successful
                         UpdateManager.ClearState();
-                        return JsonSerializer.Serialize(new { 
-                            success = true, 
+                        return JsonSerializer.Serialize(new {
+                            success = true,
                             message = "Update was already successful - session cleared",
                             action = "cleared",
                             currentVersion
@@ -1574,11 +2039,11 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                     LogUtil.LogInfo($"Version mismatch - clearing session (current={currentVersion}, target={currentState.TargetVersion})", "WebServer");
                 }
             }
-            
+
             // Clear the session
             UpdateManager.ClearState();
-            return JsonSerializer.Serialize(new { 
-                success = true, 
+            return JsonSerializer.Serialize(new {
+                success = true,
                 message = "Update session cleared",
                 action = "cleared"
             }, JsonOptions);
@@ -1667,16 +2132,16 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             var exePath = Application.ExecutablePath;
             var exeDir = Path.GetDirectoryName(exePath) ?? Environment.CurrentDirectory;
             var iconPath = Path.Combine(exeDir, "icon.ico");
-            
+
             if (File.Exists(iconPath))
             {
                 return File.ReadAllBytes(iconPath);
             }
-            
+
             // If not found, try to extract from embedded resources
             var assembly = Assembly.GetExecutingAssembly();
             var iconStream = assembly.GetManifestResourceStream("SysBot.Pokemon.WinForms.icon.ico");
-            
+
             if (iconStream != null)
             {
                 using (iconStream)
@@ -1686,7 +2151,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                     return buffer;
                 }
             }
-            
+
             // Try to get the application icon as a fallback
             var icon = Icon.ExtractAssociatedIcon(exePath);
             if (icon != null)
@@ -1695,7 +2160,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                 icon.Save(ms);
                 return ms.ToArray();
             }
-            
+
             return null;
         }
         catch (Exception ex)
@@ -1716,11 +2181,11 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
 
             using var reader = new StreamReader(request.InputStream);
             var body = await reader.ReadToEndAsync();
-            
+
             var sanitizedJson = SanitizeJsonInput(body);
             if (sanitizedJson == null)
                 return null;
-                
+
             return JsonSerializer.Deserialize<T>(sanitizedJson, CachedJsonOptions.Secure);
         }
         catch
@@ -1742,13 +2207,13 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
 
         // Remove potentially dangerous characters
         var sanitized = CleanupRegex().Replace(parameter, "");
-        
+
         return string.IsNullOrWhiteSpace(sanitized) ? null : sanitized;
     }
-    
-    
-    
-    
+
+
+
+
     private async Task<string> HandleRemoteButton(HttpListenerRequest request, int port)
     {
         try
@@ -1759,16 +2224,16 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
 
             // Send button command via TCP to the target instance
             var tcpCommand = $"REMOTE_BUTTON:{requestData.Button}:{requestData.BotIndex}";
-            
+
             if (port == _tcpPort)
             {
                 // Local command - execute directly
                 return await ExecuteLocalRemoteButton(requestData.Button, requestData.BotIndex);
             }
-            
+
             // Remote command
             var result = QueryRemote(port, tcpCommand);
-            
+
             return JsonSerializer.Serialize(new
             {
                 success = !result.StartsWith("ERROR"),
@@ -1782,7 +2247,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             return CreateErrorResponse($"Failed to send button command: {ex.Message}");
         }
     }
-    
+
     private async Task<string> HandleRemoteMacro(HttpListenerRequest request, int port)
     {
         try
@@ -1791,18 +2256,18 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             if (requestData == null)
                 return CreateErrorResponse("Invalid remote macro request");
 
-            // Send macro command via TCP to the target instance  
+            // Send macro command via TCP to the target instance
             var tcpCommand = $"REMOTE_MACRO:{requestData.Macro}:{requestData.BotIndex}";
-            
+
             if (port == _tcpPort)
             {
                 // Local command - execute directly
                 return await ExecuteLocalRemoteMacro(requestData.Macro, requestData.BotIndex);
             }
-            
+
             // Remote command
             var result = QueryRemote(port, tcpCommand);
-            
+
             return JsonSerializer.Serialize(new
             {
                 success = !result.StartsWith("ERROR"),
@@ -1816,7 +2281,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             return CreateErrorResponse($"Failed to execute macro: {ex.Message}");
         }
     }
-    
+
     private async Task<string> ExecuteLocalRemoteButton(string button, int botIndex = 0)
     {
         try
@@ -1826,7 +2291,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             {
                 if (_mainForm.InvokeRequired)
                 {
-                    return _mainForm.Invoke(() => 
+                    return _mainForm.Invoke(() =>
                         _mainForm.Controls.Find("FLP_Bots", true).FirstOrDefault()?.Controls
                             .OfType<BotController>()
                             .ToList()
@@ -1836,32 +2301,32 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                     .OfType<BotController>()
                     .ToList() ?? [];
             });
-            
+
             if (controllers.Count == 0)
                 return CreateErrorResponse("No bots available");
-                
+
             // Validate bot index
             if (botIndex < 0 || botIndex >= controllers.Count)
                 return CreateErrorResponse($"Invalid bot index: {botIndex}");
-                
+
             var botSource = controllers[botIndex].GetBot();
             if (botSource?.Bot == null)
                 return CreateErrorResponse($"Bot at index {botIndex} not available");
-                
+
             if (!botSource.IsRunning)
                 return CreateErrorResponse($"Bot at index {botIndex} is not running");
-                
+
             var bot = botSource.Bot;
             if (bot.Connection is not ISwitchConnectionAsync connection)
                 return CreateErrorResponse("Bot connection not available");
-            
+
             var switchButton = MapButtonToSwitch(button);
             if (switchButton == null)
                 return CreateErrorResponse($"Invalid button: {button}");
-            
+
             var cmd = SwitchCommand.Click(switchButton.Value);
             await connection.SendAsync(cmd, CancellationToken.None);
-            
+
             return JsonSerializer.Serialize(new
             {
                 success = true,
@@ -1875,7 +2340,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             return CreateErrorResponse($"Failed to execute button press: {ex.Message}");
         }
     }
-    
+
     private async Task<string> ExecuteLocalRemoteMacro(string macro, int botIndex = 0)
     {
         try
@@ -1885,7 +2350,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             {
                 if (_mainForm.InvokeRequired)
                 {
-                    return _mainForm.Invoke(() => 
+                    return _mainForm.Invoke(() =>
                         _mainForm.Controls.Find("FLP_Bots", true).FirstOrDefault()?.Controls
                             .OfType<BotController>()
                             .ToList()
@@ -1895,25 +2360,25 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                     .OfType<BotController>()
                     .ToList() ?? [];
             });
-            
+
             if (controllers.Count == 0)
                 return CreateErrorResponse("No bots available");
-                
+
             // Validate bot index
             if (botIndex < 0 || botIndex >= controllers.Count)
                 return CreateErrorResponse($"Invalid bot index: {botIndex}");
-                
+
             var botSource = controllers[botIndex].GetBot();
             if (botSource?.Bot == null)
                 return CreateErrorResponse($"Bot at index {botIndex} not available");
-                
+
             if (!botSource.IsRunning)
                 return CreateErrorResponse($"Bot at index {botIndex} is not running");
-                
+
             var bot = botSource.Bot;
             if (bot.Connection is not ISwitchConnectionAsync connection)
                 return CreateErrorResponse("Bot connection not available");
-            
+
             var commands = ParseMacroCommands(macro);
             foreach (var cmd in commands)
             {
@@ -1930,7 +2395,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                     // Button command
                     var parts = cmd.Split(':', 2);
                     var buttonName = parts[0];
-                    
+
                     var switchButton = MapButtonToSwitch(buttonName);
                     if (switchButton != null)
                     {
@@ -1940,7 +2405,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
                     }
                 }
             }
-            
+
             return JsonSerializer.Serialize(new
             {
                 success = true,
@@ -1954,7 +2419,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             return CreateErrorResponse($"Failed to execute macro: {ex.Message}");
         }
     }
-    
+
     private static SwitchButton? MapButtonToSwitch(string button)
     {
         return button.ToUpper() switch
@@ -1980,25 +2445,25 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             _ => null
         };
     }
-    
+
     private static List<string> ParseMacroCommands(string macro)
     {
         return [.. macro.Split([' ', ','], StringSplitOptions.RemoveEmptyEntries)
                    .Select(s => s.Trim())];
     }
-    
+
     private class RemoteButtonRequest
     {
         public string Button { get; set; } = "";
         public int BotIndex { get; set; } = 0;
     }
-    
+
     private class RemoteMacroRequest
     {
         public string Macro { get; set; } = "";
         public int BotIndex { get; set; } = 0;
     }
-    
+
     /// <summary>
     /// Sanitize command strings to prevent injection attacks
     /// </summary>
@@ -2016,15 +2481,15 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         // Additional validation for known command patterns
         var validCommands = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "INFO", "LISTBOTS", "IDLEALL", "UPDATE", "STARTALL", "STOPALL", 
+            "INFO", "LISTBOTS", "IDLEALL", "UPDATE", "STARTALL", "STOPALL",
             "RESUMEALL", "RESTARTALL", "REBOOTALL", "SCREENONALL", "SCREENOFFALL"
         };
 
         // Check if it's a basic command or a compound command
         var parts = command.Split(':');
         var baseCommand = parts[0].ToUpperInvariant();
-        
-        if (validCommands.Contains(baseCommand) || 
+
+        if (validCommands.Contains(baseCommand) ||
             baseCommand.StartsWith("REMOTE_") && parts.Length <= 3)
         {
             return command;
@@ -2048,7 +2513,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
         {
             // Validate JSON structure by attempting to parse it
             using var document = JsonDocument.Parse(json);
-            
+
             // Check for excessive nesting depth
             if (GetJsonDepth(document.RootElement) > 10)
                 return null;
@@ -2070,7 +2535,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
             return currentDepth;
 
         var maxDepth = currentDepth;
-        
+
         if (element.ValueKind == JsonValueKind.Object)
         {
             foreach (var property in element.EnumerateObject())
@@ -2090,7 +2555,7 @@ public partial class BotServer(Main mainForm, int port = 8080, int tcpPort = 808
 
         return maxDepth;
     }
-    
+
     public void Dispose()
     {
         Stop();
