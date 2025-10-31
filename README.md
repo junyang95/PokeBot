@@ -1,3 +1,8 @@
+> [!IMPORTANT]  
+> Legends Z-A release coming soon!  See a working bot in action on discord.gg/genpkm
+> Expect public release after next PKHeX update when all the issues are fixed. 
+
+
 # Project PokeBot
 ![License](https://img.shields.io/badge/License-AGPLv3-blue.svg)
 ![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/hexbyt3/PokeBot/total?style=flat-square&logoColor=Red&color=red)
