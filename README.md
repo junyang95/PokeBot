@@ -1,6 +1,5 @@
 > [!IMPORTANT]  
-> Legends Z-A release coming soon!  See a working bot in action on discord.gg/genpkm
-> Expect public release after next PKHeX update when all the issues are fixed. 
+> Legends Z-A Release is Here! Join our discord! discord.gg/genpkm
 
 
 # Project PokeBot
@@ -143,6 +142,7 @@ netsh advfirewall firewall add rule name="PokeBot Web" dir=in action=allow proto
 
 ## Supported Games
 
+- Legends ZA (PLZA)
 - Sword/Shield (SWSH)
 - Brilliant Diamond/Shining Pearl (BDSP) 
 - Legends Arceus (PLA)
