@@ -49,6 +49,7 @@ namespace SysBot.Pokemon.WinForms
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public static volatile bool IsUpdating = false;
         private System.Windows.Forms.Timer? _autoSaveTimer;
+        private System.Windows.Forms.Timer? _logCleanupTimer;
         private bool _isFormLoading = true;
 
         private SearchManager _searchManager = null!;
@@ -168,7 +169,7 @@ namespace SysBot.Pokemon.WinForms
 
                             // Restore the main config from backup
                             File.Copy(backupPath, Program.ConfigPath, true);
-                            LogUtil.LogInfo("Successfully recovered configuration from backup.", "Config");
+                            LogUtil.LogInfo("Config", "Successfully recovered configuration from backup.");
 
                             LogConfig.MaxArchiveFiles = Config.Hub.MaxArchiveFiles;
                             LogConfig.LoggingEnabled = Config.Hub.LoggingEnabled;
@@ -183,13 +184,13 @@ namespace SysBot.Pokemon.WinForms
                         }
                         catch (Exception backupEx)
                         {
-                            LogUtil.LogError($"Failed to recover from backup: {backupEx.Message}. Creating new configuration.", "Config");
+                            LogUtil.LogError("Config", $"Failed to recover from backup: {backupEx.Message}. Creating new configuration.");
                             CreateNewConfig();
                         }
                     }
                     else
                     {
-                        LogUtil.LogError("No backup file found. Creating new configuration.", "Config");
+                        LogUtil.LogError("Config", "No backup file found. Creating new configuration.");
                         CreateNewConfig();
                     }
                 }
@@ -199,7 +200,7 @@ namespace SysBot.Pokemon.WinForms
                 CreateNewConfig();
             }
 
-            RTB_Logs.MaxLength = int.MaxValue; // RichTextBox can handle much more than 32K
+            RTB_Logs.MaxLength = 2_000_000; // Limit to 2MB of text to prevent memory issues
             LoadControls();
             Text = $"{(string.IsNullOrEmpty(Config.Hub.BotName) ? "GenPKM.com" : Config.Hub.BotName)} {PokeBot.Version} ({Config.Mode})";
             trayIcon.Text = Text;
@@ -210,7 +211,7 @@ namespace SysBot.Pokemon.WinForms
             UpdateStatusIndicatorColor();
             
             this.ActiveControl = null;
-            LogUtil.LogInfo($"Bot initialization complete", "System");
+            LogUtil.LogInfo("System", $"Bot initialization complete");
             _ = Task.Run(() =>
             {
                 try
@@ -286,6 +287,7 @@ namespace SysBot.Pokemon.WinForms
             ProgramMode.LA => new PokeBotRunnerImpl<PA8>(cfg.Hub, new BotFactory8LA(), cfg),
             ProgramMode.SV => new PokeBotRunnerImpl<PK9>(cfg.Hub, new BotFactory9SV(), cfg),
             ProgramMode.LGPE => new PokeBotRunnerImpl<PB7>(cfg.Hub, new BotFactory7LGPE(), cfg),
+            ProgramMode.PLZA => new PokeBotRunnerImpl<PA9>(cfg.Hub, new BotFactory9PLZA(), cfg),
             _ => throw new IndexOutOfRangeException("Unsupported mode."),
         };
 
@@ -436,6 +438,40 @@ namespace SysBot.Pokemon.WinForms
 
             _textBoxForwarder = new TextBoxForwarder(RTB_Logs);
             LogUtil.Forwarders.Add(_textBoxForwarder);
+
+            // Initialize log cleanup timer - runs every 30 minutes
+            _logCleanupTimer = new System.Windows.Forms.Timer
+            {
+                Interval = 30 * 60 * 1000, // 30 minutes
+                Enabled = true
+            };
+            _logCleanupTimer.Tick += (s, e) =>
+            {
+                try
+                {
+                    // Clean up logs if they're getting too large
+                    if (RTB_Logs.TextLength > RTB_Logs.MaxLength * 0.8)
+                    {
+                        LogUtil.LogInfo("Performing automatic log cleanup to maintain performance", "System");
+
+                        // Keep only the last 25% of logs
+                        BeginInvoke((System.Windows.Forms.MethodInvoker)(() =>
+                        {
+                            var lines = RTB_Logs.Lines;
+                            var linesToKeep = lines.Length / 4;
+                            RTB_Logs.Lines = lines[^linesToKeep..];
+                            _searchManager.ClearSearch(); // Clear search after cleanup
+                        }));
+                    }
+
+                    // Also clean up old log files on disk
+                    CleanupOldLogFiles();
+                }
+                catch (Exception ex)
+                {
+                    LogUtil.LogError($"Log cleanup failed: {ex.Message}", "System");
+                }
+            };
         }
 
         private ProgramConfig GetCurrentConfiguration()
@@ -479,6 +515,12 @@ namespace SysBot.Pokemon.WinForms
             {
                 _autoSaveTimer.Stop();
                 _autoSaveTimer.Dispose();
+            }
+
+            if (_logCleanupTimer != null)
+            {
+                _logCleanupTimer.Stop();
+                _logCleanupTimer.Dispose();
             }
 
             // Animation timer removed
@@ -556,7 +598,7 @@ namespace SysBot.Pokemon.WinForms
         {
             SaveCurrentConfig();
 
-            LogUtil.LogInfo("Starting all bots...", "Form");
+            LogUtil.LogInfo("Form", "Starting all bots...");
             RunningEnvironment.InitializeStart();
             SendAll(BotControlCommand.Start);
 
@@ -585,48 +627,99 @@ namespace SysBot.Pokemon.WinForms
 
         private void B_RebootStop_Click(object sender, EventArgs e)
         {
-            B_Stop_Click(sender, e);
             SetButtonActiveState(btnReboot, true);
+            SetButtonActiveState(btnStart, false);
+            SetButtonActiveState(btnStop, false);
 
             Task.Run(async () =>
             {
-                await Task.Delay(3_500).ConfigureAwait(false);
-                SaveCurrentConfig();
-                LogUtil.LogInfo("Restarting all the consoles...", "Form");
-                
-                await Task.Delay(1_000).ConfigureAwait(false); // Give services time to fully stop
-                
-                RunningEnvironment.InitializeStart();
-                SendAll(BotControlCommand.RebootAndStop);
-                await Task.Delay(5_000).ConfigureAwait(false);
-                SendAll(BotControlCommand.Start);
-
-                BeginInvoke((System.Windows.Forms.MethodInvoker)(() =>
+                try
                 {
-                    SetButtonActiveState(btnReboot, false);
-                    SetButtonActiveState(btnStop, true);
+                    LogUtil.LogInfo("Form", "Starting reset process...");
+                    SaveCurrentConfig();
 
-                    foreach (Button navBtn in navButtonsPanel.Controls.OfType<Button>())
+                    // Phase 1: Stop all bots gracefully
+                    LogUtil.LogInfo("Form", "Phase 1: Stopping all bots...");
+                    SendAll(BotControlCommand.Stop);
+
+                    // Phase 2: Wait for all bots to fully stop
+                    var stopTimeout = DateTime.Now.AddSeconds(30);
+                    while (DateTime.Now < stopTimeout)
                     {
-                        if (navBtn.Tag is NavButtonState state)
+                        if (AreAllBotsStopped())
                         {
-                            state.IsSelected = false;
-                            navBtn.Invalidate();
+                            LogUtil.LogInfo("Form", "All bots stopped successfully");
+                            break;
                         }
+                        await Task.Delay(500).ConfigureAwait(false);
                     }
 
-                    if (btnNavLogs.Tag is NavButtonState logsState)
+                    if (!AreAllBotsStopped())
                     {
-                        logsState.IsSelected = true;
-                        btnNavLogs.Invalidate();
+                        LogUtil.LogInfo("Form", "Some bots did not stop in time, forcing stop...");
+                        SendAll(BotControlCommand.Stop);
+                        await Task.Delay(2000).ConfigureAwait(false);
                     }
 
-                    TransitionPanels(2);
-                    titleLabel.Text = "System Logs";
-                }));
+                    // Phase 3: Stop all services
+                    LogUtil.LogInfo("Form", "Phase 3: Stopping all services...");
+                    await Task.Delay(2000).ConfigureAwait(false); // Give services time to fully stop
 
-                if (Bots.Count == 0)
-                    WinFormsUtil.Alert("No bots configured, but all supporting services have been issued the reboot command.");
+                    // Phase 4: Reinitialize environment
+                    LogUtil.LogInfo("Form", "Phase 4: Reinitializing environment...");
+                    RunningEnvironment.InitializeStart();
+                    await Task.Delay(1000).ConfigureAwait(false);
+
+                    // Phase 5: Reboot consoles
+                    LogUtil.LogInfo("Form", "Phase 5: Rebooting all consoles...");
+                    SendAll(BotControlCommand.RebootAndStop);
+                    await Task.Delay(8000).ConfigureAwait(false); // Give consoles time to reboot
+
+                    // Phase 6: Restart all bots with staggered timing
+                    LogUtil.LogInfo("Form", "Phase 6: Starting all bots...");
+                    await StartBotsStaggeredAsync();
+
+                    BeginInvoke((System.Windows.Forms.MethodInvoker)(() =>
+                    {
+                        SetButtonActiveState(btnReboot, false);
+                        SetButtonActiveState(btnStop, true);
+                        SetButtonActiveState(btnStart, false);
+
+                        foreach (Button navBtn in navButtonsPanel.Controls.OfType<Button>())
+                        {
+                            if (navBtn.Tag is NavButtonState state)
+                            {
+                                state.IsSelected = false;
+                                navBtn.Invalidate();
+                            }
+                        }
+
+                        if (btnNavLogs.Tag is NavButtonState logsState)
+                        {
+                            logsState.IsSelected = true;
+                            btnNavLogs.Invalidate();
+                        }
+
+                        TransitionPanels(2);
+                        titleLabel.Text = "System Logs";
+                    }));
+
+                    LogUtil.LogInfo("Reset process completed successfully", "Form");
+
+                    if (Bots.Count == 0)
+                        WinFormsUtil.Alert("No bots configured, but all supporting services have been issued the reboot command.");
+                }
+                catch (Exception ex)
+                {
+                    LogUtil.LogError($"Reset process failed: {ex.Message}", "Form");
+                    BeginInvoke((System.Windows.Forms.MethodInvoker)(() =>
+                    {
+                        SetButtonActiveState(btnReboot, false);
+                        SetButtonActiveState(btnStop, false);
+                        SetButtonActiveState(btnStart, false);
+                        WinFormsUtil.Error($"Reset failed: {ex.Message}");
+                    }));
+                }
             });
         }
 
@@ -782,7 +875,7 @@ namespace SysBot.Pokemon.WinForms
             PokeRoutineExecutorBase newBot;
             try
             {
-                LogUtil.LogError($"Current Mode ({Config.Mode}) does not support this type of bot ({cfg.CurrentRoutineType}).", "Bot");
+                LogUtil.LogError("Bot", $"Current Mode ({Config.Mode}) does not support this type of bot ({cfg.CurrentRoutineType}).");
                 newBot = RunningEnvironment.CreateBotFromConfig(cfg);
             }
             catch
@@ -831,12 +924,16 @@ namespace SysBot.Pokemon.WinForms
                 CB_Routine.SelectedValue = (int)cfg.InitialRoutine;
             };
 
-            row.Remove += (s, e) =>
+            EventHandler removeHandler = null!;
+            removeHandler = (s, e) =>
             {
+                row.Remove -= removeHandler; // Unsubscribe to prevent memory leak
                 Bots.Remove(row.State);
                 RunningEnvironment.Remove(row.State, !RunningEnvironment.Config.SkipConsoleBotCreation);
                 FLP_Bots.Controls.Remove(row);
+                row.Dispose(); // Ensure proper disposal
             };
+            row.Remove += removeHandler;
         }
 
         private PokeBotState CreateNewBotConfig()
@@ -980,6 +1077,8 @@ namespace SysBot.Pokemon.WinForms
                     ProgramMode.BDSP => Resources.bdsp_mode_image,
                     ProgramMode.LA => Resources.pla_mode_image,
                     ProgramMode.LGPE => Resources.lgpe_mode_image,
+                    //Todo: Add Resources.plza_mode_image when asset is available
+                    ProgramMode.PLZA => null,
                     _ => null,
                 };
                 FLP_Bots.Invalidate();
@@ -1026,21 +1125,21 @@ namespace SysBot.Pokemon.WinForms
             BringToFront();
             Activate();
             Focus();
-            
+
             // Apply dark mode after the window is fully shown
             // Use BeginInvoke to ensure it happens after the UI thread processes the show event
             BeginInvoke((MethodInvoker)(() =>
             {
                 DarkModeHelper.SetDarkMode(this.Handle);
-                
+
                 // Force a repaint of the non-client area
-                SetWindowPos(this.Handle, IntPtr.Zero, 0, 0, 0, 0, 
+                SetWindowPos(this.Handle, IntPtr.Zero, 0, 0, 0, 0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-                    
+
                 // Force proper panel layout after tray restore
                 EnsurePanelLayout();
             }));
-            
+
             // Clear the flag after a delay
             Task.Run(async () =>
             {
@@ -1048,7 +1147,7 @@ namespace SysBot.Pokemon.WinForms
                 _isRestoringFromTray = false;
                 _suspendLayout = false;
             });
-            
+
             // Update bots asynchronously without blocking UI
             if (TC_Main.SelectedTab == Tab_Bots && FLP_Bots.Controls.Count > 0)
             {
@@ -1060,7 +1159,7 @@ namespace SysBot.Pokemon.WinForms
                     {
                         bot.ResumeAnimations();
                     }
-
+                    
                     // Schedule bot state updates asynchronously
                     Task.Run(async () =>
                     {
@@ -1091,7 +1190,7 @@ namespace SysBot.Pokemon.WinForms
         private void MinimizeToTray()
         {
             _suspendLayout = true;
-            
+
             // Pause animations on all bot controllers before hiding
             foreach (var bot in FLP_Bots.Controls.OfType<BotController>())
             {
@@ -1116,7 +1215,7 @@ namespace SysBot.Pokemon.WinForms
         {
             // Don't minimize to tray on minimize button - only on close (X) button
             // The minimize button should just minimize normally to taskbar
-            
+
             // Handle window state changes to manage animations
             if (WindowState == FormWindowState.Minimized)
             {
@@ -1144,11 +1243,11 @@ namespace SysBot.Pokemon.WinForms
 
             // Reapply dark mode when form is shown (helps with tray restore)
             DarkModeHelper.SetDarkMode(this.Handle);
-            
+
             // Ensure panels are properly positioned
             EnsurePanelLayout();
         }
-        
+
         protected override void OnActivated(EventArgs e)
         {
             base.OnActivated(e);
@@ -1266,6 +1365,105 @@ namespace SysBot.Pokemon.WinForms
             }
             
             base.WndProc(ref m);
+        }
+
+        #endregion
+
+        #region Log Management
+
+        private void CleanupOldLogFiles()
+        {
+            try
+            {
+                var workingDirectory = Path.GetDirectoryName(Environment.ProcessPath) ?? "";
+                var logDirectory = Path.Combine(workingDirectory, "logs");
+
+                if (!Directory.Exists(logDirectory))
+                    return;
+
+                var logFiles = Directory.GetFiles(logDirectory, "SysBotLog.*.txt")
+                    .Select(f => new FileInfo(f))
+                    .OrderByDescending(f => f.LastWriteTime)
+                    .ToList();
+
+                // Keep only the last 7 days of logs
+                var cutoffDate = DateTime.Now.AddDays(-7);
+                foreach (var file in logFiles.Where(f => f.LastWriteTime < cutoffDate))
+                {
+                    try
+                    {
+                        file.Delete();
+                        LogUtil.LogInfo($"Deleted old log file: {file.Name}", "System");
+                    }
+                    catch
+                    {
+                        // File might be in use, ignore
+                    }
+                }
+
+                // Also check current log file size
+                var currentLogFile = Path.Combine(logDirectory, "SysBotLog.txt");
+                if (File.Exists(currentLogFile))
+                {
+                    var fileInfo = new FileInfo(currentLogFile);
+                    // If current log file is over 100MB, force rotation
+                    if (fileInfo.Length > 100 * 1024 * 1024)
+                    {
+                        LogUtil.LogInfo("Current log file exceeds 100MB, forcing rotation", "System");
+                        // NLog will handle the rotation on next write
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogUtil.LogError($"Failed to cleanup old log files: {ex.Message}", "System");
+            }
+        }
+
+        #endregion
+
+        #region Reset Helper Methods
+
+        private bool AreAllBotsStopped()
+        {
+            foreach (var controller in FLP_Bots.Controls.OfType<BotController>())
+            {
+                var state = controller.ReadBotState();
+                if (state != "STOPPED" && state != "IDLE")
+                    return false;
+            }
+            return true;
+        }
+
+        private async Task StartBotsStaggeredAsync()
+        {
+            var controllers = FLP_Bots.Controls.OfType<BotController>().ToList();
+
+            if (controllers.Count == 0)
+            {
+                SendAll(BotControlCommand.Start);
+                return;
+            }
+
+            // Start bots in groups with delays to prevent overwhelming the system
+            const int batchSize = 3;
+            const int delayBetweenBatches = 2000; // 2 seconds between batches
+
+            for (int i = 0; i < controllers.Count; i += batchSize)
+            {
+                var batch = controllers.Skip(i).Take(batchSize);
+                foreach (var controller in batch)
+                {
+                    controller.SendCommand(BotControlCommand.Start, false);
+                }
+
+                if (i + batchSize < controllers.Count)
+                {
+                    await Task.Delay(delayBetweenBatches).ConfigureAwait(false);
+                }
+            }
+
+            LogUtil.LogText($"Started {controllers.Count} bots in batches");
         }
 
         #endregion

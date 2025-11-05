@@ -649,7 +649,10 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
         {
             try
             {
-                var result = await Helpers<T>.ProcessShowdownSetAsync(content);
+                // Detect custom trainer info BEFORE generating the Pokemon
+                var ignoreAutoOT = content.Contains("OT:") || content.Contains("TID:") || content.Contains("SID:");
+
+                var result = await Helpers<T>.ProcessShowdownSetAsync(content, ignoreAutoOT);
 
                 if (result.Pokemon == null)
                 {
@@ -658,7 +661,6 @@ public class TradeModule<T> : ModuleBase<SocketCommandContext> where T : PKM, ne
                 }
 
                 var sig = Context.User.GetFavor();
-                var ignoreAutoOT = content.Contains("OT:") || content.Contains("TID:") || content.Contains("SID:");
 
                 await Helpers<T>.AddTradeToQueueAsync(
                     Context, code, Context.User.Username, result.Pokemon, sig, Context.User,

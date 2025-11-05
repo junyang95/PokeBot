@@ -14,7 +14,7 @@ namespace SysBot.Pokemon.Twitch
 {
     public class TwitchBot<T> where T : PKM, new()
     {
-        internal static readonly List<TwitchQueue<T>> QueuePool = new();
+        internal static readonly List<TwitchQueue<T>> QueuePool = [];
 
         private static PokeTradeHub<T> Hub = default!;
 
