@@ -547,7 +547,32 @@ public class PokeTradeBotPLZA(PokeTradeHub<PA9> Hub, PokeBotState Config) : Poke
         if (unexpected)
             Log("Unexpected behavior, recovering to overworld.");
 
-        // Wait 3 seconds after trade completes before attempting to disconnect
+        Log("Exiting trade to overworld...");
+
+        // CRITICAL: Wait for GameState to return to 0x01 before attempting to exit
+        // This ensures the trade animation is completely finished
+        int gameStateWaitTime = 10; // Wait up to 10 seconds for animation to complete
+        int gameStateElapsed = 0;
+        bool animationComplete = false;
+
+        while (gameStateElapsed < gameStateWaitTime)
+        {
+            var currentState = await GetGameState(token).ConfigureAwait(false);
+            if (currentState == 0x01)
+            {
+                animationComplete = true;
+                break;
+            }
+            await Task.Delay(1_000, token).ConfigureAwait(false);
+            gameStateElapsed++;
+        }
+
+        if (!animationComplete)
+        {
+            Log("Trade animation did not complete. Attempting exit anyway...");
+        }
+
+        // Wait 3 seconds after animation completes before attempting to disconnect
         await Task.Delay(3_000, token).ConfigureAwait(false);
 
         // Check if we're already at overworld
@@ -558,57 +583,84 @@ public class PokeTradeBotPLZA(PokeTradeHub<PA9> Hub, PokeBotState Config) : Poke
             return;
         }
 
-        Log("Exiting trade to overworld...");
-        int timeoutSeconds = 30;
-        int elapsed = 0;
+        // Check if partner is still connected or has disconnected
+        var nidCheck = await GetTradePartnerNID(token).ConfigureAwait(false);
 
-        while (elapsed < timeoutSeconds)
+        if (nidCheck == 0)
         {
-            // Check if we've reached overworld
-            if (await CheckIfOnOverworld(token).ConfigureAwait(false))
+            // Partner already left, just press B to return to overworld
+            int timeoutSeconds = 30;
+            int elapsedExit = 0;
+
+            while (elapsedExit < timeoutSeconds)
             {
-                Log("Returned to overworld.");
-                StartFromOverworld = true;
-                _wasConnectedToPartner = false; // Reset flag when successfully back to overworld
-                return;
+                // Check if we've reached overworld
+                if (await CheckIfOnOverworld(token).ConfigureAwait(false))
+                {
+                    Log("Returned to overworld.");
+                    StartFromOverworld = true;
+                    _wasConnectedToPartner = false; // Reset flag when successfully back to overworld
+                    return;
+                }
+
+                // Continue pressing B to exit menus
+                await Click(B, 1_000, token).ConfigureAwait(false);
+                elapsedExit++;
             }
 
-            // B-A-B pattern: Press B, then A, then B again
-            // This handles both "in box" state (A confirms exit) and normal menu states (B backs out)
-            await Click(B, 1_000, token).ConfigureAwait(false);
-            if (await CheckIfOnOverworld(token).ConfigureAwait(false))
-            {
-                Log("Returned to overworld.");
-                StartFromOverworld = true;
-                _wasConnectedToPartner = false;
-                return;
-            }
-
-            await Click(A, 1_000, token).ConfigureAwait(false);
-            if (await CheckIfOnOverworld(token).ConfigureAwait(false))
-            {
-                Log("Returned to overworld.");
-                StartFromOverworld = true;
-                _wasConnectedToPartner = false;
-                return;
-            }
-
-            await Click(B, 1_000, token).ConfigureAwait(false);
-            if (await CheckIfOnOverworld(token).ConfigureAwait(false))
-            {
-                Log("Returned to overworld.");
-                StartFromOverworld = true;
-                _wasConnectedToPartner = false;
-                return;
-            }
-
-            elapsed += 3; // 3 seconds per B-A-B cycle
+            // Failed to return to overworld - restart the game
+            Log("Failed to return to overworld after 30 seconds. Restarting game...");
+            await RestartGamePLZA(token).ConfigureAwait(false);
+            StartFromOverworld = true;
+            return;
         }
+        else
+        {
+            int disconnectTimeout = 30; // Extended timeout for full exit sequence
+            int disconnectElapsed = 0;
+            bool partnerDisconnectedDuringExit = false;
 
-        // Failed to return to overworld - restart the game
-        Log("Failed to return to overworld after 30 seconds. Restarting game...");
-        await RestartGamePLZA(token).ConfigureAwait(false);
-        StartFromOverworld = true;
+            while (disconnectElapsed < disconnectTimeout)
+            {
+                // Check if we've reached overworld
+                if (await CheckIfOnOverworld(token).ConfigureAwait(false))
+                {
+                    Log("Returned to overworld.");
+                    StartFromOverworld = true;
+                    _wasConnectedToPartner = false; // Reset flag when successfully back to overworld
+                    return;
+                }
+
+                // Check if partner disconnected during exit - if so, switch to B-only
+                if (!partnerDisconnectedDuringExit)
+                {
+                    var currentNID = await GetTradePartnerNID(token).ConfigureAwait(false);
+                    if (currentNID == 0)
+                    {
+                        partnerDisconnectedDuringExit = true;
+                    }
+                }
+
+                if (partnerDisconnectedDuringExit)
+                {
+                    // Partner left, just press B to navigate menus
+                    await Click(B, 1_000, token).ConfigureAwait(false);
+                }
+                else
+                {
+                    // Partner still connected, press B+A to disconnect
+                    await Click(B, 1_000, token).ConfigureAwait(false);
+                    await Click(A, 1_000, token).ConfigureAwait(false);
+                }
+
+                disconnectElapsed++;
+            }
+
+            // Failed to exit properly - restart the game
+            Log("Failed to exit trade after 30 seconds. Restarting game...");
+            await RestartGamePLZA(token).ConfigureAwait(false);
+            StartFromOverworld = true;
+        }
     }
 
     #endregion
