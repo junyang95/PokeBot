@@ -391,6 +391,18 @@ public class PokeTradeBotPLZA(PokeTradeHub<PA9> Hub, PokeBotState Config) : Poke
 
             if (b1s1Changed)
             {
+                // Check if partner offered a Pokemon that will evolve
+                if (Hub.Config.Trade.TradeConfiguration.DisallowTradeEvolve)
+                {
+                    var offered = await ReadUntilPresentPointer(Offsets.LinkTradePartnerPokemonPointer, 2_000, 0_500, BoxFormatSlotSize, token).ConfigureAwait(false);
+                    if (offered != null && TradeEvolutions.WillTradeEvolve(offered.Species, offered.Form, offered.HeldItem, detail.TradeData.Species))
+                    {
+                        Log("Trade cancelled because trainer offered a Pokémon that would evolve upon trade.");
+                        detail.SendNotification(this, "Trade cancelled. You cannot trade a Pokémon that will evolve. To prevent this, either give your Pokémon an Everstone to hold, or trade a different Pokémon.");
+                        return PokeTradeResult.TradeEvolveNotAllowed;
+                    }
+                }
+
                 var currentGameState = await GetGameState(token).ConfigureAwait(false);
                 if (currentGameState == 0x02)
                 {

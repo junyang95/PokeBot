@@ -328,6 +328,18 @@ public class PokeTradeBotBS : PokeRoutineExecutor8BS, ICountBot, ITradeBot, IDis
             var newEC = await SwitchConnection.ReadBytesAbsoluteAsync(BoxStartOffset, 8, token).ConfigureAwait(false);
             if (!newEC.SequenceEqual(oldEC))
             {
+                // Check if partner offered a Pokemon that will evolve
+                if (Hub.Config.Trade.TradeConfiguration.DisallowTradeEvolve)
+                {
+                    var offered = await ReadPokemon(LinkTradePokemonOffset, BoxFormatSlotSize, token).ConfigureAwait(false);
+                    if (offered != null && TradeEvolutions.WillTradeEvolve(offered.Species, offered.Form, offered.HeldItem, detail.TradeData.Species))
+                    {
+                        Log("Trade cancelled because trainer offered a Pokémon that would evolve upon trade.");
+                        detail.SendNotification(this, "Trade cancelled. You cannot trade a Pokémon that will evolve. To prevent this, either give your Pokémon an Everstone to hold, or trade a different Pokémon.");
+                        return PokeTradeResult.TradeEvolveNotAllowed;
+                    }
+                }
+
                 await Task.Delay(25_000, token).ConfigureAwait(false);
                 return PokeTradeResult.Success;
             }
