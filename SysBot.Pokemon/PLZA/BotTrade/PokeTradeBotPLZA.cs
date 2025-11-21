@@ -583,84 +583,42 @@ public class PokeTradeBotPLZA(PokeTradeHub<PA9> Hub, PokeBotState Config) : Poke
             return;
         }
 
-        // Check if partner is still connected or has disconnected
-        var nidCheck = await GetTradePartnerNID(token).ConfigureAwait(false);
+        // Use MenuState to determine whether to disconnect or navigate back
+        int timeoutSeconds = 30;
+        int elapsedExit = 0;
 
-        if (nidCheck == 0)
+        while (elapsedExit < timeoutSeconds)
         {
-            // Partner already left, just press B to return to overworld
-            int timeoutSeconds = 30;
-            int elapsedExit = 0;
+            var menuState = await GetMenuState(token).ConfigureAwait(false);
 
-            while (elapsedExit < timeoutSeconds)
+            // Check if we've reached overworld
+            if (menuState == MenuState.Overworld)
             {
-                // Check if we've reached overworld
-                if (await CheckIfOnOverworld(token).ConfigureAwait(false))
-                {
-                    Log("Returned to overworld.");
-                    StartFromOverworld = true;
-                    _wasConnectedToPartner = false; // Reset flag when successfully back to overworld
-                    return;
-                }
+                Log("Returned to overworld.");
+                StartFromOverworld = true;
+                _wasConnectedToPartner = false; // Reset flag when successfully back to overworld
+                return;
+            }
 
-                // Continue pressing B to exit menus
+            if (menuState == MenuState.InBox)
+            {
+                // Still in trade box with partner connected - press B+A to disconnect
                 await Click(B, 1_000, token).ConfigureAwait(false);
-                elapsedExit++;
+                await Click(A, 1_000, token).ConfigureAwait(false);
             }
-
-            // Failed to return to overworld - restart the game
-            Log("Failed to return to overworld after 30 seconds. Restarting game...");
-            await RestartGamePLZA(token).ConfigureAwait(false);
-            StartFromOverworld = true;
-            return;
-        }
-        else
-        {
-            int disconnectTimeout = 30; // Extended timeout for full exit sequence
-            int disconnectElapsed = 0;
-            bool partnerDisconnectedDuringExit = false;
-
-            while (disconnectElapsed < disconnectTimeout)
+            else
             {
-                // Check if we've reached overworld
-                if (await CheckIfOnOverworld(token).ConfigureAwait(false))
-                {
-                    Log("Returned to overworld.");
-                    StartFromOverworld = true;
-                    _wasConnectedToPartner = false; // Reset flag when successfully back to overworld
-                    return;
-                }
-
-                // Check if partner disconnected during exit - if so, switch to B-only
-                if (!partnerDisconnectedDuringExit)
-                {
-                    var currentNID = await GetTradePartnerNID(token).ConfigureAwait(false);
-                    if (currentNID == 0)
-                    {
-                        partnerDisconnectedDuringExit = true;
-                    }
-                }
-
-                if (partnerDisconnectedDuringExit)
-                {
-                    // Partner left, just press B to navigate menus
-                    await Click(B, 1_000, token).ConfigureAwait(false);
-                }
-                else
-                {
-                    // Partner still connected, press B+A to disconnect
-                    await Click(B, 1_000, token).ConfigureAwait(false);
-                    await Click(A, 1_000, token).ConfigureAwait(false);
-                }
-
-                disconnectElapsed++;
+                // Partner disconnected (LinkTrade, LinkPlay, XMenu) - just press B
+                await Click(B, 1_000, token).ConfigureAwait(false);
             }
 
-            // Failed to exit properly - restart the game
-            Log("Failed to exit trade after 30 seconds. Restarting game...");
-            await RestartGamePLZA(token).ConfigureAwait(false);
-            StartFromOverworld = true;
+            elapsedExit++;
         }
+
+        // Failed to exit properly - restart the game
+        Log("Failed to exit trade after 30 seconds. Restarting game...");
+        await RestartGamePLZA(token).ConfigureAwait(false);
+        StartFromOverworld = true;
     }
 
     #endregion
