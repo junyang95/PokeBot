@@ -391,18 +391,6 @@ public class PokeTradeBotPLZA(PokeTradeHub<PA9> Hub, PokeBotState Config) : Poke
 
             if (b1s1Changed)
             {
-                // Check if partner offered a Pokemon that will evolve
-                if (Hub.Config.Trade.TradeConfiguration.DisallowTradeEvolve)
-                {
-                    var offered = await ReadUntilPresentPointer(Offsets.LinkTradePartnerPokemonPointer, 2_000, 0_500, BoxFormatSlotSize, token).ConfigureAwait(false);
-                    if (offered != null && TradeEvolutions.WillTradeEvolve(offered.Species, offered.Form, offered.HeldItem, detail.TradeData.Species))
-                    {
-                        Log("Trade cancelled because trainer offered a Pokémon that would evolve upon trade.");
-                        detail.SendNotification(this, "Trade cancelled. You cannot trade a Pokémon that will evolve. To prevent this, either give your Pokémon an Everstone to hold, or trade a different Pokémon.");
-                        return PokeTradeResult.TradeEvolveNotAllowed;
-                    }
-                }
-
                 var currentGameState = await GetGameState(token).ConfigureAwait(false);
                 if (currentGameState == 0x02)
                 {
@@ -1017,6 +1005,29 @@ public class PokeTradeBotPLZA(PokeTradeHub<PA9> Hub, PokeBotState Config) : Poke
             var pokemonBeforeBatchTrade = await ReadPokemon(offsetBeforeBatch, BoxFormatSlotSize, token).ConfigureAwait(false);
             var checksumBeforeBatchTrade = pokemonBeforeBatchTrade.Checksum;
 
+            // Read the partner's offered Pokemon BEFORE we start pressing A to confirm
+            var offeredBatch = await ReadUntilPresentPointer(Offsets.LinkTradePartnerPokemonPointer, 3_000, 0_500, BoxFormatSlotSize, token).ConfigureAwait(false);
+            if (offeredBatch == null || offeredBatch.Species == 0 || !offeredBatch.ChecksumValid)
+            {
+                Log($"Trade {currentTradeIndex + 1} ended because trainer offer was rescinded too quickly.");
+                poke.SendNotification(this, $"Trade partner didn't offer a valid Pokémon for trade {currentTradeIndex + 1}. Canceling remaining trades.");
+                SendCollectedPokemonAndCleanup();
+                await DisconnectFromTrade(token).ConfigureAwait(false);
+                await ExitTradeToOverworld(false, token).ConfigureAwait(false);
+                return PokeTradeResult.TrainerOfferCanceledQuick;
+            }
+
+            // Check if the offered Pokemon will evolve upon trade BEFORE confirming
+            if (Hub.Config.Trade.TradeConfiguration.DisallowTradeEvolve && TradeEvolutions.WillTradeEvolve(offeredBatch.Species, offeredBatch.Form, offeredBatch.HeldItem, toSend.Species))
+            {
+                Log($"Trade {currentTradeIndex + 1} cancelled because trainer offered a Pokémon that would evolve upon trade.");
+                poke.SendNotification(this, $"Trade cancelled for trade {currentTradeIndex + 1}. You cannot trade a Pokémon that will evolve. To prevent this, either give your Pokémon an Everstone to hold, or trade a different Pokémon.");
+                SendCollectedPokemonAndCleanup();
+                await DisconnectFromTrade(token).ConfigureAwait(false);
+                await ExitTradeToOverworld(false, token).ConfigureAwait(false);
+                return PokeTradeResult.TradeEvolveNotAllowed;
+            }
+
             Log($"Confirming trade {currentTradeIndex + 1}/{totalBatchTrades}.");
             var tradeResult = await ConfirmAndStartTrading(poke, checksumBeforeBatchTrade, token).ConfigureAwait(false);
             if (tradeResult != PokeTradeResult.Success)
@@ -1560,6 +1571,33 @@ public class PokeTradeBotPLZA(PokeTradeHub<PA9> Hub, PokeBotState Config) : Poke
         var pokemonBeforeTrade = await ReadPokemon(offsetBefore, BoxFormatSlotSize, token).ConfigureAwait(false);
         var checksumBeforeTrade = pokemonBeforeTrade.Checksum;
 
+        // Read the partner's offered Pokemon BEFORE we start pressing A to confirm
+        // This way we can cancel with B+A if they're offering something that will evolve
+        if (offered == null) // Only read if we haven't already (Clone/Dump read it earlier)
+        {
+            offered = await ReadUntilPresentPointer(Offsets.LinkTradePartnerPokemonPointer, 3_000, 0_500, BoxFormatSlotSize, token).ConfigureAwait(false);
+        }
+
+        if (offered == null || offered.Species == 0 || !offered.ChecksumValid)
+        {
+            Log("Trade ended because trainer offer was rescinded too quickly.");
+            poke.SendNotification(this, "Trade partner didn't offer a valid Pokémon.");
+            await DisconnectFromTrade(token).ConfigureAwait(false);
+            await ExitTradeToOverworld(false, token).ConfigureAwait(false);
+            return PokeTradeResult.TrainerOfferCanceledQuick;
+        }
+
+        // Check if the offered Pokemon will evolve upon trade BEFORE confirming
+        if (Hub.Config.Trade.TradeConfiguration.DisallowTradeEvolve && TradeEvolutions.WillTradeEvolve(offered.Species, offered.Form, offered.HeldItem, toSend.Species))
+        {
+            Log("Trade cancelled because trainer offered a Pokémon that would evolve upon trade.");
+            poke.SendNotification(this, "Trade cancelled. You cannot trade a Pokémon that will evolve. To prevent this, either give your Pokémon an Everstone to hold, or trade a different Pokémon.");
+            await DisconnectFromTrade(token).ConfigureAwait(false);
+            await ExitTradeToOverworld(false, token).ConfigureAwait(false);
+            return PokeTradeResult.TradeEvolveNotAllowed;
+        }
+
+        Log("Confirming trade.");
         var tradeResult = await ConfirmAndStartTrading(poke, checksumBeforeTrade, token).ConfigureAwait(false);
         if (tradeResult != PokeTradeResult.Success)
         {
