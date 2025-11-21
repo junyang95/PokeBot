@@ -1446,6 +1446,15 @@ public class PokeTradeBotSV(PokeTradeHub<PK9> Hub, PokeBotState Config) : PokeRo
         else if (itemReq == SpecialTradeType.Shinify)
             poke.SendNotification(this, "Shinify success!  Thanks for being part of the community!");
 
+        // Check if the offered Pokemon will evolve upon trade BEFORE confirming
+        if (Hub.Config.Trade.TradeConfiguration.DisallowTradeEvolve && TradeEvolutions.WillTradeEvolve(offered.Species, offered.Form, offered.HeldItem, toSend.Species))
+        {
+            Log("Trade cancelled because trainer offered a Pokémon that would evolve upon trade.");
+            poke.SendNotification(this, "Trade cancelled. You cannot trade a Pokémon that will evolve. To prevent this, either give your Pokémon an Everstone to hold, or trade a different Pokémon.");
+            await ExitTradeToPortal(false, token).ConfigureAwait(false);
+            return PokeTradeResult.TradeEvolveNotAllowed;
+        }
+
         Log("Confirming trade.");
         var tradeResult = await ConfirmAndStartTrading(poke, token).ConfigureAwait(false);
         if (tradeResult != PokeTradeResult.Success)
