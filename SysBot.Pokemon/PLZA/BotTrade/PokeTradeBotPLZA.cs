@@ -536,10 +536,21 @@ public class PokeTradeBotPLZA(PokeTradeHub<PA9> Hub, PokeBotState Config) : Poke
     private async Task DisconnectFromTrade(CancellationToken token)
     {
         Log("Disconnecting from trade...");
-        await Click(B, 0_500, token).ConfigureAwait(false);
-        await Click(B, 0_500, token).ConfigureAwait(false);
-        await Click(B, 0_500, token).ConfigureAwait(false);
-        await Click(A, 1_000, token).ConfigureAwait(false);
+
+        // Check if we're still in the trade box (connected) or kicked to menu
+        var menuState = await GetMenuState(token).ConfigureAwait(false);
+
+        if (menuState == MenuState.InBox)
+        {
+            // Still in trade box - press B+A to disconnect
+            await Click(B, 0_500, token).ConfigureAwait(false);
+            await Click(A, 1_000, token).ConfigureAwait(false);
+        }
+        else
+        {
+            // Already kicked to menu - only press B to navigate back
+            await Click(B, 0_500, token).ConfigureAwait(false);
+        }
     }
 
     private async Task ExitTradeToOverworld(bool unexpected, CancellationToken token)
