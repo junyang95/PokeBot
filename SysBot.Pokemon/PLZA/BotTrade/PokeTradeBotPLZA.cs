@@ -34,6 +34,7 @@ public class PokeTradeBotPLZA(PokeTradeHub<PA9> Hub, PokeBotState Config) : Poke
     private ulong? _cachedBoxOffset;
     private ulong TradePartnerStatusOffset;
     private bool _wasConnectedToPartner = false;
+    private int _consecutiveConnectionFailures = 0; // Track consecutive online connection failures for soft ban detection
 
     public event EventHandler<Exception>? ConnectionError;
 
@@ -66,6 +67,7 @@ public class PokeTradeBotPLZA(PokeTradeHub<PA9> Hub, PokeBotState Config) : Poke
             // Ensure cache is clean on startup
             _cachedBoxOffset = null;
             _wasConnectedToPartner = false;
+            _consecutiveConnectionFailures = 0;
 
             Hub.Queues.Info.CleanStuckTrades();
             await InitializeHardware(Hub.Config.Trade, token).ConfigureAwait(false);
@@ -212,7 +214,7 @@ public class PokeTradeBotPLZA(PokeTradeHub<PA9> Hub, PokeBotState Config) : Poke
             if (await IsOnMenu(MenuState.InBox, token).ConfigureAwait(false))
             {
                 Log("Trade partner detected!");
-                _wasConnectedToPartner = false; // Reset flag when successfully back to overworld
+                _wasConnectedToPartner = true; // Mark that we've connected to a partner
 
                 // Set the offset for trade partner status monitoring (used in clone mode)
                 var (valid, statusOffset) = await ValidatePointerAll(Offsets.TradePartnerStatusPointer, token).ConfigureAwait(false);
@@ -469,6 +471,7 @@ public class PokeTradeBotPLZA(PokeTradeHub<PA9> Hub, PokeBotState Config) : Poke
             await Click(A, 1_000, token).ConfigureAwait(false);
             await Click(A, 1_000, token).ConfigureAwait(false);
             await Task.Delay(1_000, token).ConfigureAwait(false);
+            _consecutiveConnectionFailures = 0;
         }
         else
         {
@@ -480,12 +483,23 @@ public class PokeTradeBotPLZA(PokeTradeHub<PA9> Hub, PokeBotState Config) : Poke
                 await Task.Delay(1_000, token).ConfigureAwait(false);
                 if (++attempts > 30)
                 {
-                    Log("Failed to connect online.");
+                    _consecutiveConnectionFailures++;
+                    Log($"Failed to connect online. Consecutive failures: {_consecutiveConnectionFailures}");
+
+                    if (_consecutiveConnectionFailures >= 3)
+                    {
+                        Log("Soft ban detected (3 consecutive connection failures). Waiting 30 minutes...");
+                        await Task.Delay(30 * 60 * 1000, token).ConfigureAwait(false);
+                        Log("30 minute wait complete. Resuming operations.");
+                        _consecutiveConnectionFailures = 0;
+                    }
+
                     return false;
                 }
             }
             await Task.Delay(8_000 + Hub.Config.Timings.ExtraTimeConnectOnline, token).ConfigureAwait(false);
             Log("Connected online.");
+            _consecutiveConnectionFailures = 0;
 
             await Click(A, 1_000, token).ConfigureAwait(false);
             await Click(A, 1_000, token).ConfigureAwait(false);
