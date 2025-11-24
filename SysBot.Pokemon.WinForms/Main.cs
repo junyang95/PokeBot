@@ -145,6 +145,7 @@ namespace SysBot.Pokemon.WinForms
                     Config = JsonSerializer.Deserialize(lines, ProgramConfigContext.Default.ProgramConfig) ?? new ProgramConfig();
                     LogConfig.MaxArchiveFiles = Config.Hub.MaxArchiveFiles;
                     LogConfig.LoggingEnabled = Config.Hub.LoggingEnabled;
+                    Config.Hub.Distribution.CurrentMode = Config.Mode;
                     comboBox1.SelectedValue = (int)Config.Mode;
 
                     RunningEnvironment = GetRunner(Config);
@@ -173,6 +174,7 @@ namespace SysBot.Pokemon.WinForms
 
                             LogConfig.MaxArchiveFiles = Config.Hub.MaxArchiveFiles;
                             LogConfig.LoggingEnabled = Config.Hub.LoggingEnabled;
+                            Config.Hub.Distribution.CurrentMode = Config.Mode;
                             comboBox1.SelectedValue = (int)Config.Mode;
 
                             RunningEnvironment = GetRunner(Config);
@@ -979,9 +981,19 @@ namespace SysBot.Pokemon.WinForms
             {
                 ProgramMode newMode = (ProgramMode)selectedValue;
                 Config.Mode = newMode;
+                Config.Hub.Distribution.CurrentMode = newMode;
                 SaveCurrentConfig();
                 UpdateRunnerAndUI();
                 UpdateBackgroundImage(newMode);
+
+                // Refresh PropertyGrid to update visibility of mode-specific settings
+                if (PG_Hub != null)
+                {
+                    var currentConfig = PG_Hub.SelectedObject;
+                    PG_Hub.SelectedObject = null;
+                    PG_Hub.SelectedObject = currentConfig;
+                    PG_Hub.Refresh();
+                }
             }
         }
 
